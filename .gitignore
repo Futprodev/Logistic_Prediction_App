@@ -1,0 +1,84 @@
+# ── Database ─────────────────────────────────────────────────
+# Never commit the live database — it contains ingested data
+# and will grow large. Recreate it with: python run_pipeline.py --backfill
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Logs ─────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# ── Virtual environments ──────────────────────────────────────
+.env
+.venv
+env/
+venv/
+ENV/
+data_driven/
+
+# ── Datasets ─────────────────────────────────────────────────
+# Raw source files are large and can be re-downloaded.
+# Keep the folder structure but not the files.
+datasets/pe_data_compile_1/*.csv
+datasets/pe_data_compile_1/*.xlsx
+datasets/pe_data_compile_1/*.pdf
+datasets/pe_data_compile_1/*.json
+datasets/pe_data_compile_1/*.7z
+datasets/*.zip
+datasets/*.7z
+Data_Ingestion.zip
+
+# ── Secrets / API keys ────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+secrets.json
+api_keys.json
+
+# ── OS files ─────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ── IDEs ─────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+
+# ── Jupyter ──────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ── Notebook outputs (optional — remove these lines if you
+#    want to track notebook outputs in git)
+# To keep outputs: delete the two lines below
+pre_project_code/.ipynb_checkpoints/
+
+# ── Supply chain enriched CSV (generated file) ───────────────
+pre_project_code/supply_chain_enriched.csv
+
+fix_commodity_sheet.py
+diagnose_and_fix.py

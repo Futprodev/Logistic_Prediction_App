@@ -1,0 +1,227 @@
+{
+  "sources": {
+    "wb_commodity_prices": {
+      "name": "World Bank Commodity Price Monitor",
+      "url": "https://thedocs.worldbank.org/en/doc/18675f1d1639c7a34d463f59263ba0a2-0050012025/related/CMO-Historical-Data-Monthly.xlsx",
+      "format": "xlsx",
+      "schedule": "monthly",
+      "schedule_day": 2,
+      "raw_table": "raw_commodity_prices",
+      "description": "70+ commodities monthly since 1960 \u00e2\u20ac\u201d steel, aluminum, copper, lumber, energy",
+      "free": true,
+      "requires_key": false
+    },
+    "wb_teu": {
+      "name": "World Bank Container TEU Traffic",
+      "url": "https://api.worldbank.org/v2/country/all/indicator/IS.SHP.GOOD.TU?format=json&mrv=5&per_page=500",
+      "format": "json_api",
+      "schedule": "monthly",
+      "schedule_day": 3,
+      "raw_table": "raw_teu_traffic",
+      "description": "Container port traffic TEUs per year, 180+ countries",
+      "free": true,
+      "requires_key": false
+    },
+    "eia_fuel": {
+      "name": "EIA Petroleum Spot Prices",
+      "url": "https://api.eia.gov/v2/petroleum/pri/spt/data/",
+      "format": "json_api",
+      "schedule": "weekly",
+      "schedule_day": "monday",
+      "raw_table": "raw_fuel_prices",
+      "description": "Brent crude, WTI, diesel weekly spot prices",
+      "free": true,
+      "requires_key": true,
+      "key_env": "EIA_API_KEY",
+      "key_signup": "https://www.eia.gov/opendata/register.php"
+    },
+    "fred_series": {
+      "name": "FRED Economic Data (St. Louis Fed)",
+      "series": {
+        "DCOILBRENTEU": "Brent Crude Oil Price (USD/barrel)",
+        "DCOILWTICO": "WTI Crude Oil Price (USD/barrel)",
+        "DHHNGSP": "Henry Hub Natural Gas Spot (USD/MMBtu)",
+        "PPIACO": "Producer Price Index \u00e2\u20ac\u201d All Commodities",
+        "DEXUSEU": "USD/EUR Exchange Rate",
+        "DEXCHUS": "USD/CNY Exchange Rate",
+        "DEXJPUS": "USD/JPY Exchange Rate",
+        "MANEMP": "Manufacturing Employment (PMI proxy)"
+      },
+      "url_template": "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&vintage_date={date}",
+      "format": "csv",
+      "schedule": "weekly",
+      "schedule_day": "tuesday",
+      "raw_table": "raw_macro_indicators",
+      "description": "800k economic series \u00e2\u20ac\u201d oil, FX, PMI, CPI, interest rates",
+      "free": true,
+      "requires_key": false
+    },
+    "wto_tariffs": {
+      "name": "WTO Tariff Analysis Online",
+      "url": "https://tao.wto.org/en/Home/FacilitatedAccess",
+      "format": "csv_download",
+      "schedule": "annual",
+      "schedule_month": 2,
+      "raw_table": "raw_tariff_rates",
+      "description": "Applied and bound tariff rates, 160+ countries, HS codes",
+      "free": true,
+      "requires_key": false,
+      "manual_note": "Bulk download required \u00e2\u20ac\u201d automated fetch script provided but may need browser login"
+    },
+    "open_meteo": {
+      "name": "Open-Meteo Weather API",
+      "url": "https://api.open-meteo.com/v1/forecast",
+      "marine_url": "https://marine-api.open-meteo.com/v1/marine",
+      "format": "json_api",
+      "schedule": "daily",
+      "schedule_hour": 6,
+      "raw_table": "raw_weather_port",
+      "description": "Global weather forecasts + marine conditions \u00e2\u20ac\u201d no API key required",
+      "free": true,
+      "requires_key": false
+    },
+    "copernicus_cmems": {
+      "name": "Copernicus Marine Service",
+      "url": "https://nrt.cmems-du.eu/thredds/wms/",
+      "format": "netcdf_api",
+      "schedule": "daily",
+      "raw_table": "raw_ocean_conditions",
+      "description": "EU ocean data: waves, currents, sea state forecasts",
+      "free": true,
+      "requires_key": true,
+      "key_env": "CMEMS_API_KEY",
+      "key_signup": "https://marine.copernicus.eu/services/user-learning-services/register-copernicus-marine-service"
+    },
+    "un_comtrade": {
+      "name": "UN Comtrade Trade Data",
+      "url": "https://comtradeapi.un.org/data/v1/get/C/A/HS",
+      "format": "json_api",
+      "schedule": "monthly",
+      "raw_table": "raw_trade_flows",
+      "description": "Bilateral trade flows 200+ countries, commodity-level",
+      "free": true,
+      "requires_key": true,
+      "key_env": "COMTRADE_API_KEY",
+      "key_signup": "https://comtradeapi.un.org/",
+      "free_tier_limit": "500 requests/day"
+    },
+    "equasis": {
+      "name": "Equasis Ship Safety Database",
+      "url": "https://www.equasis.org/EquasisWeb/public/HomePage",
+      "format": "web_scrape",
+      "schedule": "weekly",
+      "raw_table": "raw_vessel_safety",
+      "description": "Ship safety records, PSC inspection history, flag state data",
+      "free": true,
+      "requires_key": true,
+      "key_env": "EQUASIS_USER,EQUASIS_PASS",
+      "key_signup": "https://www.equasis.org/EquasisWeb/public/Registration",
+      "manual_note": "Requires free account registration. Rate limit: respectful scraping only."
+    },
+    "wb_lpi": {
+      "name": "World Bank Logistics Performance Index",
+      "url": "https://lpi.worldbank.org/sites/default/files/International_LPI_from_2007_to_2023_0.xlsx",
+      "format": "xlsx",
+      "schedule": "biennial",
+      "raw_table": "raw_lpi_scores",
+      "description": "LPI scores 2007\u00e2\u20ac\u201c2023, 139 countries, 6 dimensions",
+      "free": true,
+      "requires_key": false,
+      "local_copy": "already_downloaded"
+    }
+  },
+  "ports": {
+    "major_ports": [
+      {
+        "code": "SHA",
+        "name": "Shanghai",
+        "lat": 31.2304,
+        "lon": 121.4737
+      },
+      {
+        "code": "PSA",
+        "name": "Singapore",
+        "lat": 1.2897,
+        "lon": 103.8501
+      },
+      {
+        "code": "NGB",
+        "name": "Ningbo-Zhoushan",
+        "lat": 29.8683,
+        "lon": 121.544
+      },
+      {
+        "code": "PUS",
+        "name": "Busan",
+        "lat": 35.1796,
+        "lon": 129.0756
+      },
+      {
+        "code": "RTM",
+        "name": "Rotterdam",
+        "lat": 51.9225,
+        "lon": 4.4792
+      },
+      {
+        "code": "ANR",
+        "name": "Antwerp-Bruges",
+        "lat": 51.2993,
+        "lon": 4.4073
+      },
+      {
+        "code": "DXB",
+        "name": "Dubai (Jebel Ali)",
+        "lat": 24.9857,
+        "lon": 55.061
+      },
+      {
+        "code": "LAX",
+        "name": "Los Angeles",
+        "lat": 33.7405,
+        "lon": -118.2774
+      },
+      {
+        "code": "LGB",
+        "name": "Long Beach",
+        "lat": 33.7683,
+        "lon": -118.2162
+      },
+      {
+        "code": "HAM",
+        "name": "Hamburg",
+        "lat": 53.5753,
+        "lon": 9.9882
+      },
+      {
+        "code": "PIR",
+        "name": "Piraeus",
+        "lat": 37.9475,
+        "lon": 23.638
+      },
+      {
+        "code": "CMB",
+        "name": "Colombo",
+        "lat": 6.9271,
+        "lon": 79.8612
+      },
+      {
+        "code": "KUL",
+        "name": "Port Klang",
+        "lat": 2.9908,
+        "lon": 101.3832
+      },
+      {
+        "code": "MUM",
+        "name": "Mumbai (JNPT)",
+        "lat": 18.9484,
+        "lon": 72.9507
+      },
+      {
+        "code": "MBA",
+        "name": "Mombasa",
+        "lat": -4.0435,
+        "lon": 39.6682
+      }
+    ]
+  }
+}
