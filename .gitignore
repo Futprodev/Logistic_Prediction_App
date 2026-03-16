@@ -31,16 +31,14 @@ ENV/
 data_driven/
 
 # ── Datasets ─────────────────────────────────────────────────
-# Raw source files are large and can be re-downloaded.
-# Keep the folder structure but not the files.
 datasets/pe_data_compile_1/*.csv
-datasets/pe_data_compile_1/*.xlsx
 datasets/pe_data_compile_1/*.pdf
 datasets/pe_data_compile_1/*.json
 datasets/pe_data_compile_1/*.7z
 datasets/*.zip
 datasets/*.7z
 Data_Ingestion.zip
+datasets/Supply_chain_logisitcs_problem.xlsx
 
 # ── Secrets / API keys ────────────────────────────────────────
 .env
@@ -80,5 +78,19 @@ pre_project_code/.ipynb_checkpoints/
 # ── Supply chain enriched CSV (generated file) ───────────────
 pre_project_code/supply_chain_enriched.csv
 
+# unwanted files
 fix_commodity_sheet.py
 diagnose_and_fix.py
+
+# pre project stuff
+images/
+pre_project_code/
+project_documents/
+
+# node and electron
+api/node_modules/
+electron-app/node_modules/
+electron-app/build/
+
+ml/models/
+ml/__pycache__/
