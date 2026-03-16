@@ -10,6 +10,39 @@
     "react-build": "react-scripts build",
     "build": "npm run react-build && electron-builder"
   },
+  "build": {
+    "appId": "com.logistics.intelligence",
+    "productName": "Logistics Intelligence Platform",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "build/**/*",
+      "main.js",
+      "preload.js",
+      "scheduler.js",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../data",
+        "to": "data",
+        "filter": ["*.db"]
+      },
+      {
+        "from": "../ml/models",
+        "to": "ml/models"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

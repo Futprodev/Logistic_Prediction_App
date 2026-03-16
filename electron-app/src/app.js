@@ -283,8 +283,9 @@ function DashboardView() {
 // ════════════════════════════════════════════════════════════
 //  FREIGHT COMPARISON COMPONENT
 // ════════════════════════════════════════════════════════════
-function FreightComparison({ freight }) {
-  const [active, setActive] = useState("ml");
+function FreightComparison({ freight, activeTab, onTabChange }) {
+  const active    = activeTab;
+  const setActive = onTabChange;
   const rule = freight.rule_based_usd;
   const ml   = freight.ml_predicted_usd;
   const gap  = ml && rule ? ml - rule : null;
@@ -363,7 +364,7 @@ function FreightComparison({ freight }) {
                     {feat.replace(/_/g, " ")}
                   </div>
                   <div style={{ flex: 1, height: 4, background: "var(--bg-hover)", borderRadius: 2, overflow: "hidden" }}>
-                    <div style={{ width: `${(imp * 100 / topFeatures[0][1]) * 100}%`, height: "100%", background: "var(--accent-blue)", borderRadius: 2 }} />
+                    <div style={{ width: `${(imp / topFeatures[0][1]) * 100}%`, height: "100%", background: "var(--accent-blue)", borderRadius: 2 }} />
                   </div>
                   <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-primary)", minWidth: 40, textAlign: "right" }}>
                     {fmt(imp * 100, 1)}%
@@ -424,15 +425,50 @@ const PORT_NAMES = {
   KUL:"Port Klang", MUM:"Mumbai", MBA:"Mombasa",
 };
 
+const HS_QUICK_LIST = [
+  { code: "270900", label: "Crude petroleum" },
+  { code: "271019", label: "Fuel oils" },
+  { code: "260111", label: "Iron ore" },
+  { code: "720839", label: "Flat-rolled steel" },
+  { code: "740300", label: "Copper cathodes" },
+  { code: "760110", label: "Aluminum unwrought" },
+  { code: "520100", label: "Cotton, not carded" },
+  { code: "100190", label: "Wheat" },
+  { code: "100590", label: "Maize / corn" },
+  { code: "120100", label: "Soybeans" },
+  { code: "150710", label: "Soybean oil" },
+  { code: "150910", label: "Olive oil" },
+  { code: "170111", label: "Raw cane sugar" },
+  { code: "180100", label: "Cocoa beans" },
+  { code: "090111", label: "Coffee, not roasted" },
+  { code: "400110", label: "Natural rubber" },
+  { code: "440320", label: "Tropical logs" },
+  { code: "710812", label: "Gold, non-monetary" },
+  { code: "711011", label: "Platinum" },
+  { code: "847130", label: "Laptops / computers" },
+  { code: "851712", label: "Smartphones" },
+  { code: "870322", label: "Passenger cars" },
+  { code: "890190", label: "Cargo vessels" },
+  { code: "300490", label: "Pharmaceutical products" },
+  { code: "610910", label: "Cotton T-shirts" },
+  { code: "640299", label: "Footwear" },
+  { code: "940360", label: "Wooden furniture" },
+  { code: "950300", label: "Toys" },
+];
+
 function CalculatorView() {
   const [form, setForm] = useState({
     origin_port_code: "SHA",
     dest_port_code: "RTM",
-    hs_code: "720839",
+    hs_code: "",
     cargo_weight_kg: 24000,
     fob_value_usd: "",
     incoterm: "CIF",
+    hs_open: false,
   });
+
+  const [activeFreightMethod, setActiveFreightMethod] = useState("ml");
+
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]   = useState(null);
@@ -458,13 +494,18 @@ function CalculatorView() {
   };
 
   const breakdown = result?.breakdown;
+
+  const activeFreightValue = activeFreightMethod === "rule"
+    ? result?.freight?.rule_based_usd
+    : (result?.freight?.ml_predicted_usd || result?.freight?.rule_based_usd);
+
   const barData = breakdown ? [
-    { name: "Cargo (FOB)",  value: breakdown.cargo_value_fob,       color: "var(--accent-blue)" },
-    { name: "Freight",      value: breakdown.freight_cost_usd,      color: "var(--accent-amber)" },
-    { name: "Import Duty",  value: breakdown.import_duty_usd,       color: "var(--accent-red)" },
-    { name: "Insurance",    value: breakdown.insurance_usd,         color: "var(--accent-purple)" },
-    { name: "Port Handling",value: breakdown.port_handling_usd,     color: "var(--accent-teal)" },
-    { name: "Brokerage",    value: breakdown.customs_brokerage_usd, color: "#64748b" },
+    { name: "Cargo (FOB)",   value: breakdown.cargo_value_fob,       color: "var(--accent-blue)" },
+    { name: "Freight",       value: activeFreightValue,              color: activeFreightMethod === "rule" ? "var(--accent-amber)" : "var(--accent-amber)" },
+    { name: "Import Duty",   value: breakdown.import_duty_usd,       color: "var(--accent-red)" },
+    { name: "Insurance",     value: breakdown.insurance_usd,         color: "var(--accent-purple)" },
+    { name: "Port Handling", value: breakdown.port_handling_usd,     color: "var(--accent-teal)" },
+    { name: "Brokerage",     value: breakdown.customs_brokerage_usd, color: "#64748b" },
   ] : [];
 
   return (
@@ -498,9 +539,41 @@ function CalculatorView() {
             </div>
           </div>
 
-          <div style={{ marginBottom: 10 }}>
+          <div style={{ marginBottom: 10, position: "relative" }}>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>HS Code</div>
-            <input className="inp" value={form.hs_code} onChange={e => set("hs_code", e.target.value)} placeholder="e.g. 720839" />
+            <input
+              className="inp"
+              value={form.hs_code}
+              onChange={e => set("hs_code", e.target.value)}
+              onFocus={() => set("hs_open", true)}
+              onBlur={() => setTimeout(() => set("hs_open", false), 150)}
+              placeholder="e.g. 720839 or click to browse"
+            />
+            {form.hs_open && (
+              <div style={{
+                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100,
+                background: "var(--bg-raised)", border: "1px solid var(--border-strong)",
+                borderRadius: "var(--radius-sm)", marginTop: 2, maxHeight: 220,
+                overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+              }}>
+                {HS_QUICK_LIST
+                  .filter(h => !form.hs_code || h.code.startsWith(form.hs_code) || h.label.toLowerCase().includes(form.hs_code.toLowerCase()))
+                  .map(h => (
+                    <div key={h.code} onMouseDown={() => set("hs_code", h.code)} style={{
+                      padding: "8px 12px", cursor: "pointer", display: "flex",
+                      justifyContent: "space-between", alignItems: "center",
+                      borderBottom: "1px solid var(--border)",
+                      transition: "background 0.1s",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--bg-hover)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--accent-teal)" }}>{h.code}</span>
+                      <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{h.label}</span>
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
@@ -539,11 +612,21 @@ function CalculatorView() {
             {/* Total */}
             <div className="card" style={{ marginBottom: 12, borderTop: "2px solid var(--accent-teal)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div>
+                <div> 
                   <div className="label">Total Landed Cost</div>
-                  <div style={{ fontFamily: "var(--font-display)", fontSize: 36, fontWeight: 800, color: "var(--accent-teal)", marginTop: 4 }}>
-                    {fmtUsd(result.total_landed_cost_usd)}
-                  </div>
+                    <div style={{ fontFamily: "var(--font-display)", fontSize: 36, fontWeight: 800, color: "var(--accent-teal)", marginTop: 4 }}>
+                      {fmtUsd(
+                        activeFreightMethod === "rule"
+                          ? (breakdown?.cargo_value_fob + result?.freight?.rule_based_usd + breakdown?.import_duty_usd + breakdown?.insurance_usd + breakdown?.port_handling_usd + breakdown?.customs_brokerage_usd)
+                          : result.total_landed_cost_usd
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
+                          ±{result.confidence_interval_pct}% confidence · {result.computed_in_ms}ms ·{" "}
+                          <span style={{ color: activeFreightMethod === "rule" ? "var(--accent-amber)" : "var(--accent-blue)" }}>
+                            {activeFreightMethod === "rule" ? "Rule-based freight" : "ML freight"}
+                          </span>
+                        </div>
                   <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
                     ±{result.confidence_interval_pct}% confidence · {result.computed_in_ms}ms
                   </div>
@@ -562,7 +645,11 @@ function CalculatorView() {
 
             {/* Freight comparison — rule-based vs ML */}
             {result.freight && (
-              <FreightComparison freight={result.freight} />
+              <FreightComparison
+                freight={result.freight}
+                activeTab={activeFreightMethod}
+                onTabChange={setActiveFreightMethod}
+              />
             )}
 
             {/* Breakdown chart */}
@@ -1084,7 +1171,7 @@ function AlertsView() {
 function RouteCompareView() {
   const [form, setForm] = useState({
     origin_port_code: "SHA",
-    hs_code: "720839",
+    hs_code: "",
     cargo_weight_kg: 24000,
     fob_value_usd: "",
   });
@@ -1152,9 +1239,41 @@ function RouteCompareView() {
                 {PORTS.map(p => <option key={p} value={p}>{PORT_NAMES[p]} ({p})</option>)}
               </select>
             </div>
-            <div style={{ marginBottom: 10 }}>
+            <div style={{ marginBottom: 10, position: "relative" }}>
               <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>HS Code</div>
-              <input className="inp" value={form.hs_code} onChange={e => set("hs_code", e.target.value)} />
+              <input
+                className="inp"
+                value={form.hs_code}
+                onChange={e => set("hs_code", e.target.value)}
+                onFocus={() => set("hs_open", true)}
+                onBlur={() => setTimeout(() => set("hs_open", false), 150)}
+                placeholder="e.g. 720839 or click to browse"
+              />
+              {form.hs_open && (
+                <div style={{
+                  position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100,
+                  background: "var(--bg-raised)", border: "1px solid var(--border-strong)",
+                  borderRadius: "var(--radius-sm)", marginTop: 2, maxHeight: 220,
+                  overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+                }}>
+                  {HS_QUICK_LIST
+                    .filter(h => !form.hs_code || h.code.startsWith(form.hs_code) || h.label.toLowerCase().includes(form.hs_code.toLowerCase()))
+                    .map(h => (
+                      <div key={h.code} onMouseDown={() => set("hs_code", h.code)} style={{
+                        padding: "8px 12px", cursor: "pointer", display: "flex",
+                        justifyContent: "space-between", alignItems: "center",
+                        borderBottom: "1px solid var(--border)",
+                        transition: "background 0.1s",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = "var(--bg-hover)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                      >
+                        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--accent-teal)" }}>{h.code}</span>
+                        <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{h.label}</span>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
               <div>
@@ -1312,7 +1431,7 @@ function CarbonView() {
   const [form, setForm] = useState({
     origin_port_code: "SHA",
     dest_port_code:   "RTM",
-    hs_code:          "720839",
+    hs_code:          "",
     cargo_weight_kg:  24000,
     fob_value_usd:    "",
   });
@@ -1378,9 +1497,41 @@ function CarbonView() {
               </select>
             </div>
           </div>
-          <div style={{ marginBottom: 10 }}>
+          <div style={{ marginBottom: 10, position: "relative" }}>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>HS Code</div>
-            <input className="inp" value={form.hs_code} onChange={e => set("hs_code", e.target.value)} />
+            <input
+              className="inp"
+              value={form.hs_code}
+              onChange={e => set("hs_code", e.target.value)}
+              onFocus={() => set("hs_open", true)}
+              onBlur={() => setTimeout(() => set("hs_open", false), 150)}
+              placeholder="e.g. 720839 or click to browse"
+            />
+            {form.hs_open && (
+              <div style={{
+                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100,
+                background: "var(--bg-raised)", border: "1px solid var(--border-strong)",
+                borderRadius: "var(--radius-sm)", marginTop: 2, maxHeight: 220,
+                overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+              }}>
+                {HS_QUICK_LIST
+                  .filter(h => !form.hs_code || h.code.startsWith(form.hs_code) || h.label.toLowerCase().includes(form.hs_code.toLowerCase()))
+                  .map(h => (
+                    <div key={h.code} onMouseDown={() => set("hs_code", h.code)} style={{
+                      padding: "8px 12px", cursor: "pointer", display: "flex",
+                      justifyContent: "space-between", alignItems: "center",
+                      borderBottom: "1px solid var(--border)",
+                      transition: "background 0.1s",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--bg-hover)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--accent-teal)" }}>{h.code}</span>
+                      <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{h.label}</span>
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
             <div>
@@ -1466,8 +1617,9 @@ function CarbonView() {
             <div className="card">
               <div className="label" style={{ marginBottom: 12 }}>Emissions in Context</div>
               {CONTEXT.map(ctx => {
+                const maxMultiple = Math.max(...CONTEXT.map(c => carbon.co2_tonnes / c.co2));
                 const multiple = carbon.co2_tonnes / ctx.co2;
-                const barPct   = Math.min((carbon.co2_tonnes / (ctx.co2 * 10)) * 100, 100);
+                const barPct = Math.min((multiple / maxMultiple) * 100, 100);
                 return (
                   <div key={ctx.label} style={{ marginBottom: 14 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
