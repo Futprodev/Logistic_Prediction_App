@@ -48,6 +48,7 @@ import pickle
 import logging
 import argparse
 import sqlite3
+import math
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -67,24 +68,6 @@ MODEL_PATH = MODEL_DIR / "freight_model.pkl"
 META_PATH  = MODEL_DIR / "freight_model_meta.json"
 
 # ── Port metadata ─────────────────────────────────────────────────────────────
-PORT_DISTANCES = {
-    ("SHA", "RTM"): 11800, ("SHA", "LAX"): 5900,  ("SHA", "PSA"): 2100,
-    ("SHA", "DXB"): 6200,  ("SHA", "HAM"): 11900, ("SHA", "LGB"): 5900,
-    ("SHA", "ANR"): 11700, ("SHA", "PUS"): 540,   ("SHA", "NGB"): 165,
-    ("SHA", "PIR"): 10200, ("SHA", "CMB"): 4200,  ("SHA", "KUL"): 2600,
-    ("SHA", "MUM"): 4800,  ("SHA", "MBA"): 7200,
-    ("PSA", "RTM"): 9600,  ("PSA", "LAX"): 8700,  ("PSA", "DXB"): 3600,
-    ("PSA", "HAM"): 9700,  ("PSA", "LGB"): 8700,  ("PSA", "ANR"): 9500,
-    ("PSA", "CMB"): 1650,  ("PSA", "KUL"): 290,   ("PSA", "MUM"): 2600,
-    ("PSA", "MBA"): 4300,  ("PSA", "PIR"): 8100,  ("PSA", "PUS"): 2600,
-    ("RTM", "LAX"): 8700,  ("RTM", "DXB"): 6200,  ("RTM", "LGB"): 8700,
-    ("RTM", "HAM"): 420,   ("RTM", "ANR"): 120,   ("RTM", "PIR"): 2300,
-    ("DXB", "MBA"): 2400,  ("DXB", "MUM"): 1100,  ("DXB", "CMB"): 1650,
-    ("CMB", "MBA"): 2800,  ("PUS", "LAX"): 4800,  ("PUS", "LGB"): 4800,
-    ("NGB", "RTM"): 11900, ("NGB", "LAX"): 5900,  ("LAX", "LGB"): 25,
-    ("HAM", "ANR"): 380,   ("HAM", "PIR"): 2700,  ("MUM", "MBA"): 3100,
-}
-
 PORT_EFFICIENCY = {
     "SHA": 4.3, "PSA": 4.8, "NGB": 4.2, "PUS": 4.1, "RTM": 4.5,
     "ANR": 4.3, "DXB": 4.0, "LAX": 3.5, "LGB": 3.5, "HAM": 4.2,
@@ -96,31 +79,65 @@ PORT_CONGESTION = {
     "ANR": 0.45, "DXB": 0.55, "LAX": 0.80, "LGB": 0.75, "HAM": 0.50,
     "PIR": 0.40, "CMB": 0.55, "KUL": 0.50, "MUM": 0.70, "MBA": 0.60,
 }
+# Canal distance additions (nm) over Haversine great circle
+CANAL_ADDITIONS = {
+    ("SHA","RTM"):800, ("SHA","HAM"):800, ("SHA","ANR"):800, ("SHA","PIR"):400,
+    ("PSA","RTM"):700, ("PSA","HAM"):700, ("PSA","ANR"):700, ("PSA","PIR"):300,
+    ("NGB","RTM"):800, ("NGB","HAM"):800, ("NGB","ANR"):800,
+    ("DXB","RTM"):500, ("DXB","HAM"):500, ("DXB","ANR"):500,
+    ("CMB","RTM"):600, ("CMB","HAM"):600, ("CMB","ANR"):600,
+    ("MUM","RTM"):600, ("MUM","HAM"):600, ("MUM","ANR"):600,
+    ("SHA","LAX"):300, ("SHA","LGB"):300,
+    ("PSA","LAX"):300, ("PSA","LGB"):300,
+    ("PUS","LAX"):250, ("PUS","LGB"):250,
+}
 
-# Routes requiring Suez Canal (SHA/PSA/NGB/PUS/DXB → RTM/HAM/ANR/PIR)
+# Routes requiring Suez Canal
 SUEZ_ROUTES = {
-    ("SHA", "RTM"), ("SHA", "HAM"), ("SHA", "ANR"), ("SHA", "PIR"),
-    ("PSA", "RTM"), ("PSA", "HAM"), ("PSA", "ANR"), ("PSA", "PIR"),
-    ("NGB", "RTM"), ("NGB", "HAM"), ("NGB", "ANR"),
-    ("PUS", "RTM"), ("PUS", "HAM"), ("PUS", "ANR"),
-    ("DXB", "RTM"), ("DXB", "HAM"), ("DXB", "ANR"),
-    ("CMB", "RTM"), ("CMB", "HAM"), ("CMB", "ANR"),
-    ("MUM", "RTM"), ("MUM", "HAM"), ("MUM", "ANR"),
+    ("SHA","RTM"),("SHA","HAM"),("SHA","ANR"),("SHA","PIR"),
+    ("PSA","RTM"),("PSA","HAM"),("PSA","ANR"),("PSA","PIR"),
+    ("NGB","RTM"),("NGB","HAM"),("NGB","ANR"),
+    ("PUS","RTM"),("PUS","HAM"),("PUS","ANR"),
+    ("DXB","RTM"),("DXB","HAM"),("DXB","ANR"),
+    ("CMB","RTM"),("CMB","HAM"),("CMB","ANR"),
+    ("MUM","RTM"),("MUM","HAM"),("MUM","ANR"),
 }
 
-# Routes requiring Panama Canal (SHA/PSA → LAX/LGB)
+# Routes requiring Panama Canal
 PANAMA_ROUTES = {
-    ("SHA", "LAX"), ("SHA", "LGB"), ("PSA", "LAX"), ("PSA", "LGB"),
-    ("NGB", "LAX"), ("NGB", "LGB"), ("PUS", "LAX"), ("PUS", "LGB"),
+    ("SHA","LAX"),("SHA","LGB"),("PSA","LAX"),("PSA","LGB"),
+    ("NGB","LAX"),("NGB","LGB"),("PUS","LAX"),("PUS","LGB"),
 }
 
-PORTS = list(PORT_EFFICIENCY.keys())
+
+def haversine_nm(lat1, lon1, lat2, lon2):
+    """Great circle distance in nautical miles using Haversine formula."""
+    R = 3440.065
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1))
+         * math.cos(math.radians(lat2))
+         * math.sin(dlon / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def get_distance(origin, dest):
-    return (PORT_DISTANCES.get((origin, dest))
-            or PORT_DISTANCES.get((dest, origin))
-            or 8000)
+def get_distance(conn, origin, dest):
+    """Calculate route distance from DB coordinates + canal corrections."""
+    row_o = conn.execute(
+        "SELECT lat, lon FROM dim_ports WHERE port_code = ?", (origin,)
+    ).fetchone()
+    row_d = conn.execute(
+        "SELECT lat, lon FROM dim_ports WHERE port_code = ?", (dest,)
+    ).fetchone()
+    if not row_o or not row_o[0]:
+        raise ValueError(f"Port '{origin}' not found in dim_ports or has no coordinates")
+    if not row_d or not row_d[0]:
+        raise ValueError(f"Port '{dest}' not found in dim_ports or has no coordinates")
+    base     = haversine_nm(row_o[0], row_o[1], row_d[0], row_d[1])
+    addition = (CANAL_ADDITIONS.get((origin, dest))
+                or CANAL_ADDITIONS.get((dest, origin), 0))
+    return round(base + addition)
 
 
 def get_distance_band(nm):
@@ -208,18 +225,28 @@ def generate_freight_cost(distance_nm, fuel_price, fuel_dev_pct, cargo_weight_kg
 
 
 # ── Generate training dataset ─────────────────────────────────────────────────
-def generate_training_data(fuel_df, n_samples, rng):
+def generate_training_data(conn, fuel_df, n_samples, rng):
     records = []
     le_band = LabelEncoder()
     bands   = ["short", "medium", "long", "ultra"]
     le_band.fit(bands)
 
-    for i in range(n_samples):
-        # Random route
-        origin = rng.choice(PORTS)
-        dest   = rng.choice([p for p in PORTS if p != origin])
+    # Load port data from database
+    port_rows = conn.execute("""
+        SELECT port_code, lat, lon FROM dim_ports
+        WHERE lat IS NOT NULL AND lon IS NOT NULL
+    """).fetchall()
+    PORTS_DB = [r[0] for r in port_rows]
 
-        distance_nm  = get_distance(origin, dest)
+    if not PORTS_DB:
+        raise ValueError("No ports found in dim_ports — run the pipeline first")
+
+    for i in range(n_samples):
+        # Random route from DB ports
+        origin = rng.choice(PORTS_DB)
+        dest   = rng.choice([p for p in PORTS_DB if p != origin])
+
+        distance_nm  = get_distance(conn, origin, dest)
         origin_eff   = PORT_EFFICIENCY[origin]
         dest_eff     = PORT_EFFICIENCY[dest]
         origin_cong  = PORT_CONGESTION[origin] + rng.normal(0, 0.05)
@@ -386,13 +413,15 @@ def save(model, le_band, metrics, n_samples):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main(n_samples=3000, evaluate_only=False):
-    rng = np.random.default_rng(42)
+    rng  = np.random.default_rng(42)
+    conn = sqlite3.connect(DB_PATH)
 
     log.info("Loading fuel price data from database...")
     fuel_df = load_fuel_data(DB_PATH)
 
     log.info(f"Generating {n_samples} training samples...")
-    df, le_band = generate_training_data(fuel_df, n_samples, rng)
+    df, le_band = generate_training_data(conn, fuel_df, n_samples, rng)
+    conn.close()
 
     log.info("Training XGBoost model...")
     model, X_train, X_test, y_train, y_test = train(df)

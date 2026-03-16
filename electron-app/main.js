@@ -1,6 +1,7 @@
-const { app, BrowserWindow, shell } = require("electron");
-const path = require("path");
-const isDev = !app.isPackaged;
+const { app, BrowserWindow, shell, ipcMain } = require("electron");
+const path       = require("path");
+const scheduler  = require("./scheduler");
+const isDev      = !app.isPackaged;
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -18,7 +19,6 @@ function createWindow() {
     icon: path.join(__dirname, "assets/icon.png"),
   });
 
-  // In dev, load from React dev server; in prod, load built files
   if (isDev) {
     win.loadURL("http://localhost:3000");
     win.webContents.openDevTools();
@@ -26,16 +26,40 @@ function createWindow() {
     win.loadFile(path.join(__dirname, "build/index.html"));
   }
 
-  // Open external links in default browser
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
   });
 }
 
-app.whenReady().then(createWindow);
+// ── IPC handlers for scheduler status ────────────────────────────────────────
+ipcMain.handle("scheduler:status", () => scheduler.getStatus());
+ipcMain.handle("scheduler:run-now", (_, source) => {
+  return new Promise(resolve => {
+    const { spawn } = require("child_process");
+    const path      = require("path");
+    const root      = path.join(__dirname, "..");
+    const proc      = spawn("python", [path.join(root, "run_pipeline.py"), "--source", source], {
+      cwd: root, windowsHide: true,
+    });
+    proc.on("close", code => resolve({ success: code === 0 }));
+    proc.on("error", err => resolve({ success: false, error: err.message }));
+  });
+});
+
+app.whenReady().then(() => {
+  createWindow();
+  // Start scheduler after window is ready
+  // In dev, skip scheduler to avoid running pipeline constantly
+  if (!isDev) {
+    scheduler.start();
+  } else {
+    console.log("[Main] Dev mode — scheduler disabled. Run pipeline manually.");
+  }
+});
 
 app.on("window-all-closed", () => {
+  scheduler.stop();
   if (process.platform !== "darwin") app.quit();
 });
 

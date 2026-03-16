@@ -13,6 +13,7 @@ const path       = require("path");
 const Database   = require("better-sqlite3");
 const { calculateLandedCost, compareRoutes } = require("./services/landedCost");
 const { getAlerts, acknowledgeAlert, getAlertSummary } = require("./services/alerts");
+const scheduler = require("./services/scheduler");
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -346,6 +347,15 @@ app.post("/api/v1/alerts/:id/acknowledge", wrap((req, res) => {
   res.json({ success: ok });
 }));
 
+app.post("/api/v1/alerts/:id/unacknowledge", wrap((req, res) => {
+  const result = db.prepare(`
+    UPDATE pred_rate_alerts
+    SET acknowledged = 0, acknowledged_at = NULL
+    WHERE alert_id = ?
+  `).run(req.params.id);
+  res.json({ success: result.changes > 0 });
+}));
+
 
 // ── GET /api/v1/macro ─────────────────────────────────────────────────────────
 app.get("/api/v1/macro", wrap((req, res) => {
@@ -361,6 +371,21 @@ app.get("/api/v1/macro", wrap((req, res) => {
   res.json({ macro: rows });
 }));
 
+// Scheduler
+
+app.get("/api/v1/scheduler", wrap((req, res) => {
+  res.json({ schedules: scheduler.getStatus(db) });
+}));
+
+app.post("/api/v1/scheduler/:source/run", wrap((req, res) => {
+  const { source } = req.params;
+  const valid = ["weather", "fuel", "commodities", "tariffs"];
+  if (!valid.includes(source)) {
+    return res.status(400).json({ error: `Unknown source. Valid: ${valid.join(", ")}` });
+  }
+  setImmediate(() => scheduler.triggerNow(db, source));
+  res.json({ success: true, message: `${source} pipeline triggered` });
+}));
 
 // ── 404 ───────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
@@ -390,6 +415,7 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`\nLogistics Intelligence API running on http://localhost:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health\n`);
+  scheduler.start(db);
 });
 
 module.exports = app;

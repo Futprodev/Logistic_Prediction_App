@@ -11,18 +11,15 @@ const path = require("path");
 // ── ML model caller ───────────────────────────────────────────────────────────
 function callMLModel(features) {
   try {
+    const input    = JSON.stringify(features);
     const mlScript = path.join(__dirname, "../../ml/predict.py");
-    const { spawnSync } = require("child_process");
-    const result = spawnSync("python", [mlScript], {
-      input: JSON.stringify(features),
+    const output   = execSync(`python "${mlScript}"`, {
+      input,
       timeout: 8000,
       encoding: "utf8",
     });
-    if (result.error) throw result.error;
-    if (result.stderr) console.error("ML stderr:", result.stderr);
-    return JSON.parse(result.stdout.trim());
+    return JSON.parse(output.trim());
   } catch (err) {
-    console.error("ML model error:", err.message);
     return {
       ml_predicted_usd: null,
       confidence_interval_pct: null,
@@ -31,6 +28,63 @@ function callMLModel(features) {
       error: err.message,
     };
   }
+}
+
+// ── Carbon calculation ────────────────────────────────────────────────────────
+// IMO MEPC.1/Circ.684 emission factors and EEOI methodology
+const IMO_FUEL_CONSUMPTION_PER_NM_PER_TEU = 0.03;  // tonnes HFO per nm per TEU
+const IMO_CO2_PER_TONNE_HFO               = 3.114;  // tonnes CO2 per tonne HFO
+const EU_ETS_PRICE_EUR_FALLBACK            = 65.0;   // €/tonne CO2 — 2024 average
+const EUR_TO_USD_FALLBACK                  = 1.08;   // fallback if no FX data
+
+function calculateCarbon(db, distanceNm, cargoWeightKg, freightUsd) {
+  const teu            = Math.max(cargoWeightKg / 10000, 0.1);
+  const fuelTonnes     = distanceNm * IMO_FUEL_CONSUMPTION_PER_NM_PER_TEU * teu;
+  const co2Tonnes      = fuelTonnes * IMO_CO2_PER_TONNE_HFO;
+  const co2PerTeu      = co2Tonnes / teu;
+
+  // Get EU ETS price from macro indicators if available
+  let etsPriceEur = EU_ETS_PRICE_EUR_FALLBACK;
+  let etsPriceSource = "static_fallback_2024_average";
+  try {
+    const etsRow = db.prepare(`
+      SELECT value FROM raw_macro_indicators
+      WHERE series_id = 'EU_ETS_PRICE'
+      ORDER BY date DESC LIMIT 1
+    `).get();
+    if (etsRow) {
+      etsPriceEur = etsRow.value;
+      etsPriceSource = "live";
+    }
+  } catch (_) {}
+
+  // Get EUR/USD rate
+  let eurUsd = EUR_TO_USD_FALLBACK;
+  try {
+    const fxRow = db.prepare(`
+      SELECT value FROM raw_macro_indicators
+      WHERE series_id = 'FX_EURUSD'
+      ORDER BY date DESC LIMIT 1
+    `).get();
+    if (fxRow) eurUsd = fxRow.value;
+  } catch (_) {}
+
+  const carbonCostEur = co2Tonnes * etsPriceEur;
+  const carbonCostUsd = carbonCostEur * eurUsd;
+  const carbonPctOfFreight = freightUsd > 0
+    ? (carbonCostUsd / freightUsd) * 100 : 0;
+
+  return {
+    co2_tonnes:              Math.round(co2Tonnes * 10) / 10,
+    co2_per_teu_tonnes:      Math.round(co2PerTeu * 10) / 10,
+    fuel_consumed_tonnes:    Math.round(fuelTonnes * 10) / 10,
+    ets_price_eur_per_tonne: etsPriceEur,
+    ets_price_source:        etsPriceSource,
+    carbon_cost_eur:         Math.round(carbonCostEur),
+    carbon_cost_usd:         Math.round(carbonCostUsd),
+    carbon_pct_of_freight:   Math.round(carbonPctOfFreight * 10) / 10,
+    methodology:             "IMO MEPC.1/Circ.684 EEOI — 0.03t HFO/nm/TEU × 3.114 CO2/t HFO",
+  };
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -63,27 +117,46 @@ const FREIGHT_RATE_BY_DISTANCE = [
   { maxNm: 99999, rate: 3400 },
 ];
 
-// Approximate distances between major port pairs (nautical miles)
-const PORT_DISTANCES = {
-  "SHA-RTM": 11800, "SHA-LAX": 5900,  "SHA-PSA": 2100,
-  "SHA-DXB": 6200,  "SHA-HAM": 11900, "SHA-LGB": 5900,
-  "SHA-ANR": 11700, "SHA-PUS": 540,   "SHA-NGB": 165,
-  "PSA-RTM": 9600,  "PSA-LAX": 8700,  "PSA-DXB": 3600,
-  "PSA-HAM": 9700,  "PSA-LGB": 8700,  "PSA-ANR": 9500,
-  "PSA-CMB": 1650,  "PSA-KUL": 290,   "PSA-MUM": 2600,
-  "RTM-LAX": 8700,  "RTM-DXB": 6200,  "RTM-LGB": 8700,
-  "DXB-MBA": 2400,  "DXB-MUM": 1100,  "DXB-CMB": 1650,
-  "CMB-MBA": 2800,  "PUS-LAX": 4800,  "PUS-LGB": 4800,
-  "NGB-RTM": 11900, "NGB-LAX": 5900,
+// Canal distance additions (nm) over Haversine great circle
+// Suez adds ~800nm, Panama adds ~300nm vs straight line
+const CANAL_ADDITIONS = {
+  "SHA-RTM":800, "SHA-HAM":800, "SHA-ANR":800, "SHA-PIR":400,
+  "PSA-RTM":700, "PSA-HAM":700, "PSA-ANR":700, "PSA-PIR":300,
+  "NGB-RTM":800, "NGB-HAM":800, "NGB-ANR":800,
+  "DXB-RTM":500, "DXB-HAM":500, "DXB-ANR":500,
+  "CMB-RTM":600, "CMB-HAM":600, "CMB-ANR":600,
+  "MUM-RTM":600, "MUM-HAM":600, "MUM-ANR":600,
+  "SHA-LAX":300, "SHA-LGB":300,
+  "PSA-LAX":300, "PSA-LGB":300,
+  "PUS-LAX":250, "PUS-LGB":250,
 };
 
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function getRouteDistance(originPort, destPort) {
-  const key1 = `${originPort}-${destPort}`;
-  const key2 = `${destPort}-${originPort}`;
-  return PORT_DISTANCES[key1] || PORT_DISTANCES[key2] || 8000; // default mid-range
+function haversineNm(lat1, lon1, lat2, lon2) {
+  const R    = 3440.065; // Earth radius in nautical miles
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a    = Math.sin(dLat / 2) ** 2
+             + Math.cos(lat1 * Math.PI / 180)
+             * Math.cos(lat2 * Math.PI / 180)
+             * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function getRouteDistance(db, originPort, destPort) {
+  const o = db.prepare("SELECT lat, lon FROM dim_ports WHERE port_code = ?").get(originPort);
+  const d = db.prepare("SELECT lat, lon FROM dim_ports WHERE port_code = ?").get(destPort);
+  if (!o?.lat || !d?.lat) {
+  const missing = !o?.lat ? originPort : destPort;
+  throw new Error(`Port '${missing}' not found in database or has no coordinates`);
+  }
+  const base     = haversineNm(o.lat, o.lon, d.lat, d.lon);
+  const key1     = `${originPort}-${destPort}`;
+  const key2     = `${destPort}-${originPort}`;
+  const addition = CANAL_ADDITIONS[key1] || CANAL_ADDITIONS[key2] || 0;
+  return Math.round(base + addition);
 }
 
 function getBaseFreightRate(distanceNm) {
@@ -175,7 +248,7 @@ function calculateLandedCost(db, params) {
   }
 
   // ── 2. Freight cost ────────────────────────────────────────────────────────
-  const distanceNm     = getRouteDistance(origin_port_code, dest_port_code);
+  const distanceNm     = getRouteDistance(db, origin_port_code, dest_port_code);
   const baseFreightTeu = getBaseFreightRate(distanceNm);
 
   // Fuel surcharge: check if Brent is >20% above 180d average
@@ -370,7 +443,10 @@ function calculateLandedCost(db, params) {
   const freightFinal = mlResult.ml_predicted_usd || freightCost;
   const totalFinal   = cargoValueFob + freightFinal + importDuty + insurance + thc + brokerage;
 
-  // ── 11. Return response ───────────────────────────────────────────────────
+  // ── 11. Carbon calculation ────────────────────────────────────────────────
+  const carbon = calculateCarbon(db, distanceNm, cargo_weight_kg || 10000, freightFinal);
+
+  // ── 12. Return response ───────────────────────────────────────────────────
   return {
     estimate_id: estimateId,
     total_landed_cost_usd: Math.round(totalFinal * 100) / 100,
@@ -384,13 +460,14 @@ function calculateLandedCost(db, params) {
       customs_brokerage_usd: Math.round(brokerage * 100) / 100,
     },
     freight: {
-      rule_based_usd:            Math.round(freightCost * 100) / 100,
-      ml_predicted_usd:          mlResult.ml_predicted_usd ? Math.round(mlResult.ml_predicted_usd * 100) / 100 : null,
+      rule_based_usd:             Math.round(freightCost * 100) / 100,
+      ml_predicted_usd:           mlResult.ml_predicted_usd ? Math.round(mlResult.ml_predicted_usd * 100) / 100 : null,
       ml_confidence_interval_pct: mlResult.confidence_interval_pct,
       ml_feature_contributions:   mlResult.feature_contributions,
       ml_model_version:           mlResult.model_version,
       ml_error:                   mlResult.error,
     },
+    carbon,
     tariff_info: {
       rate_pct:    tariffRate,
       type:        tariffType,

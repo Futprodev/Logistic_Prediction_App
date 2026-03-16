@@ -1,6 +1,9 @@
-const { contextBridge } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
-// Expose safe APIs to renderer if needed in future
 contextBridge.exposeInMainWorld("electron", {
   platform: process.platform,
+  scheduler: {
+    getStatus: ()       => ipcRenderer.invoke("scheduler:status"),
+    runNow:    (source) => ipcRenderer.invoke("scheduler:run-now", source),
+  },
 });

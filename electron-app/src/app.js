@@ -19,11 +19,13 @@ function PctBadge({ value }) {
 
 // ── Sidebar nav ───────────────────────────────────────────────────────────────
 const NAV = [
-  { id: "dashboard", icon: "▦", label: "Dashboard" },
+  { id: "dashboard",  icon: "▦", label: "Dashboard" },
   { id: "calculator", icon: "◈", label: "Landed Cost" },
-  { id: "commodities", icon: "◉", label: "Commodities" },
-  { id: "ports", icon: "⬡", label: "Ports" },
-  { id: "alerts", icon: "◎", label: "Alerts" },
+  { id: "compare",    icon: "⇄", label: "Route Compare" },
+  { id: "carbon",     icon: "◌", label: "Carbon Cost" },
+  { id: "commodities",icon: "◉", label: "Commodities" },
+  { id: "ports",      icon: "⬡", label: "Ports" },
+  { id: "alerts",     icon: "◎", label: "Alerts" },
 ];
 
 function Sidebar({ active, onChange, alertCount }) {
@@ -716,7 +718,9 @@ function CommoditiesView() {
               <ResponsiveContainer width="100%" height={280}>
                 <LineChart data={history}>
                   <XAxis dataKey="date" tick={{ fill: "var(--text-tertiary)", fontSize: 10, fontFamily: "var(--font-mono)" }}
-                    tickFormatter={v => v?.slice(0, 7)} interval={5} axisLine={false} tickLine={false} />
+                          tickFormatter={v => v?.slice(0, 7)}
+                          interval={Math.max(0, Math.floor(history.length / 8) - 1)}
+                          axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: "var(--text-tertiary)", fontSize: 10, fontFamily: "var(--font-mono)" }} axisLine={false} tickLine={false} width={60} />
                   <Tooltip content={<ChartTooltip prefix="$" />} />
                   <Line type="monotone" dataKey="price_usd" stroke="var(--accent-blue)" strokeWidth={2} dot={false} name="Price" />
@@ -1001,7 +1005,7 @@ function AlertsView() {
 
   const load = () => {
     setLoading(true);
-    api.alerts().then(setData).finally(() => setLoading(false));
+    api.alerts({ unacknowledged_only: false }).then(setData).finally(() => setLoading(false));
   };
 
   useEffect(load, []);
@@ -1009,6 +1013,11 @@ function AlertsView() {
   const ack = async (id) => {
     await api.acknowledgeAlert(id);
     load();
+  };
+
+  const undo = async (id) => {
+  await api.unacknowledgeAlert(id);
+  load();
   };
 
   if (loading) return (
@@ -1050,11 +1059,13 @@ function AlertsView() {
               {alert.triggered_at?.slice(0, 16)}
             </div>
           </div>
-          {!alert.acknowledged && (
-            <button className="btn" style={{ fontSize: 11, padding: "4px 10px", flexShrink: 0 }} onClick={() => ack(alert.alert_id)}>
-              Dismiss
+            <button
+              className="btn"
+              style={{ fontSize: 11, padding: "4px 10px", flexShrink: 0 }}
+              onClick={() => alert.acknowledged ? undo(alert.alert_id) : ack(alert.alert_id)}
+            >
+              {alert.acknowledged ? "Restore" : "Dismiss"}
             </button>
-          )}
         </div>
       ))}
 
@@ -1063,6 +1074,427 @@ function AlertsView() {
           No alerts
         </div>
       )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+//  ROUTE COMPARE VIEW
+// ════════════════════════════════════════════════════════════
+function RouteCompareView() {
+  const [form, setForm] = useState({
+    origin_port_code: "SHA",
+    hs_code: "720839",
+    cargo_weight_kg: 24000,
+    fob_value_usd: "",
+  });
+  const [selectedDests, setSelectedDests] = useState(["RTM", "HAM", "ANR"]);
+  const [result, setResult]   = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState(null);
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const toggleDest = (port) => {
+    setSelectedDests(prev =>
+      prev.includes(port)
+        ? prev.filter(p => p !== port)
+        : prev.length < 5 ? [...prev, port] : prev
+    );
+  };
+
+  const compare = async () => {
+    if (selectedDests.length < 2) {
+      setError("Select at least 2 destination ports to compare");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const params = {
+        ...form,
+        cargo_weight_kg: Number(form.cargo_weight_kg),
+        fob_value_usd:   Number(form.fob_value_usd),
+        dest_port_code:  selectedDests[0],
+        alternative_dest_ports: selectedDests.slice(1),
+      };
+      const res = await api.compareRoutes(params);
+      setResult(res);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const cheapest = result?.cheapest_port;
+  const maxCost  = result?.results?.reduce((m, r) => Math.max(m, r.total_landed_cost_usd), 0) || 1;
+
+  return (
+    <div className="fade-in" style={{ padding: "1.5rem", overflowY: "auto", flex: 1 }}>
+      <div style={{ marginBottom: "1.5rem" }}>
+        <h1 style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>
+          Route Comparison
+        </h1>
+        <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>
+          Compare landed cost across up to 5 destination ports simultaneously
+        </p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16 }}>
+        {/* Form */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div className="card">
+            <div className="label" style={{ marginBottom: 14 }}>Shipment</div>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Origin Port</div>
+              <select className="inp" value={form.origin_port_code} onChange={e => set("origin_port_code", e.target.value)}>
+                {PORTS.map(p => <option key={p} value={p}>{PORT_NAMES[p]} ({p})</option>)}
+              </select>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>HS Code</div>
+              <input className="inp" value={form.hs_code} onChange={e => set("hs_code", e.target.value)} />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+              <div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Weight (kg)</div>
+                <input className="inp" type="number" value={form.cargo_weight_kg} onChange={e => set("cargo_weight_kg", e.target.value)} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>FOB (USD)</div>
+                <input className="inp" type="number" value={form.fob_value_usd} onChange={e => set("fob_value_usd", e.target.value)} placeholder="Leave blank to estimate"/>
+              </div>
+            </div>
+            <button className="btn primary" style={{ width: "100%" }} onClick={compare} disabled={loading}>
+              {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Comparing…</> : `Compare ${selectedDests.length} Routes`}
+            </button>
+            {error && (
+              <div style={{ marginTop: 10, fontSize: 12, color: "var(--accent-red)", padding: "8px 10px", background: "rgba(239,68,68,0.08)", borderRadius: "var(--radius-sm)" }}>
+                {error}
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="label" style={{ marginBottom: 12 }}>Destination Ports <span style={{ color: "var(--text-tertiary)" }}>(select 2–5)</span></div>
+            {PORTS.filter(p => p !== form.origin_port_code).map(p => {
+              const selected = selectedDests.includes(p);
+              return (
+                <div key={p} onClick={() => toggleDest(p)} style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "8px 10px", borderRadius: "var(--radius-sm)",
+                  cursor: "pointer", marginBottom: 2,
+                  background: selected ? "rgba(59,127,255,0.08)" : "transparent",
+                  border: `1px solid ${selected ? "rgba(59,127,255,0.3)" : "transparent"}`,
+                  transition: "all 0.12s",
+                }}>
+                  <div style={{
+                    width: 16, height: 16, borderRadius: 3,
+                    border: `1.5px solid ${selected ? "var(--accent-blue)" : "var(--border-strong)"}`,
+                    background: selected ? "var(--accent-blue)" : "transparent",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    flexShrink: 0, fontSize: 10, color: "#fff",
+                  }}>
+                    {selected ? "✓" : ""}
+                  </div>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--accent-teal)" }}>{p}</span>
+                  <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{PORT_NAMES[p]}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Results */}
+        <div>
+          {result ? (
+            <div className="fade-in">
+              <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+                <div className="label">Ranked by total landed cost</div>
+                {cheapest && (
+                  <span className="tag tag-green">Cheapest: {PORT_NAMES[cheapest]} ({cheapest})</span>
+                )}
+              </div>
+
+              {result.results.map((r, i) => {
+                const isCheapest = r.route_info?.dest_port === cheapest;
+                const barWidth   = (r.total_landed_cost_usd / maxCost) * 100;
+                const saving     = result.results[0].total_landed_cost_usd - r.total_landed_cost_usd;
+
+                return (
+                  <div key={r.route_info?.dest_port} className="card" style={{
+                    marginBottom: 10,
+                    borderLeft: `3px solid ${isCheapest ? "var(--accent-teal)" : i === 1 ? "var(--accent-blue)" : "var(--border)"}`,
+                    borderRadius: "0 var(--radius-lg) var(--radius-lg) 0",
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontFamily: "var(--font-display)", fontSize: 18, fontWeight: 700,
+                          color: isCheapest ? "var(--accent-teal)" : "var(--text-tertiary)" }}>
+                          #{i + 1}
+                        </span>
+                        <div>
+                          <div style={{ fontFamily: "var(--font-mono)", fontSize: 14, color: "var(--text-primary)", fontWeight: 500 }}>
+                            {PORT_NAMES[r.route_info?.dest_port]} ({r.route_info?.dest_port})
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", marginTop: 2 }}>
+                            {fmt(r.route_info?.distance_nm)} nm
+                            {r.carbon && ` · ${fmt(r.carbon.co2_tonnes, 1)}t CO₂`}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700,
+                          color: isCheapest ? "var(--accent-teal)" : "var(--text-primary)" }}>
+                          {fmtUsd(r.total_landed_cost_usd)}
+                        </div>
+                        {!isCheapest && saving < 0 && (
+                          <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--accent-red)", marginTop: 2 }}>
+                            +{fmtUsd(Math.abs(saving))} vs cheapest
+                          </div>
+                        )}
+                        {isCheapest && (
+                          <span className="tag tag-green" style={{ marginTop: 4, display: "inline-block" }}>Best route</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Cost bar */}
+                    <div style={{ height: 4, background: "var(--bg-hover)", borderRadius: 2, marginBottom: 12, overflow: "hidden" }}>
+                      <div style={{ width: `${barWidth}%`, height: "100%", borderRadius: 2,
+                        background: isCheapest ? "var(--accent-teal)" : "var(--accent-blue)",
+                        transition: "width 0.5s ease" }} />
+                    </div>
+
+                    {/* Breakdown row */}
+                    <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                      {[
+                        ["Freight",  r.breakdown?.freight_cost_usd,      "var(--accent-amber)"],
+                        ["Duty",     r.breakdown?.import_duty_usd,        "var(--accent-red)"],
+                        ["Insurance",r.breakdown?.insurance_usd,          "var(--accent-purple)"],
+                        ["THC",      r.breakdown?.port_handling_usd,      "var(--accent-teal)"],
+                        ["Brokerage",r.breakdown?.customs_brokerage_usd,  "#64748b"],
+                      ].map(([label, val, color]) => (
+                        <div key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <span style={{ width: 7, height: 7, borderRadius: 2, background: color, flexShrink: 0 }} />
+                          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{label}:</span>
+                          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-secondary)" }}>
+                            {fmtUsd(val)}
+                          </span>
+                        </div>
+                      ))}
+                      {r.tariff_info?.type === "preferential" && (
+                        <span className="tag tag-green" style={{ fontSize: 10 }}>FTA {r.tariff_info.fta_name}</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 300,
+              color: "var(--text-tertiary)", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontSize: 40, opacity: 0.2 }}>⇄</div>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>Select ports and compare routes</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+//  CARBON COST VIEW
+// ════════════════════════════════════════════════════════════
+function CarbonView() {
+  const [form, setForm] = useState({
+    origin_port_code: "SHA",
+    dest_port_code:   "RTM",
+    hs_code:          "720839",
+    cargo_weight_kg:  24000,
+    fob_value_usd:    "",
+  });
+  const [result, setResult]   = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState(null);
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const calculate = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.landedCost({
+        ...form,
+        cargo_weight_kg: Number(form.cargo_weight_kg),
+        fob_value_usd:   Number(form.fob_value_usd),
+      });
+      setResult(res);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const carbon = result?.carbon;
+
+  // Comparisons for context
+  const CONTEXT = [
+    { label: "EU passenger car (1 year)", co2: 2.1 },
+    { label: "London–NYC flight (economy)", co2: 0.5 },
+    { label: "Average EU household (1 year)", co2: 8.0 },
+    { label: "1 tonne of beef produced", co2: 60.0 },
+  ];
+
+  return (
+    <div className="fade-in" style={{ padding: "1.5rem", overflowY: "auto", flex: 1 }}>
+      <div style={{ marginBottom: "1.5rem" }}>
+        <h1 style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>
+          Carbon Cost Estimator
+        </h1>
+        <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>
+          CO₂e emissions and EU ETS carbon cost per shipment — IMO MEPC.1/Circ.684 methodology
+        </p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16 }}>
+        {/* Form */}
+        <div className="card" style={{ height: "fit-content" }}>
+          <div className="label" style={{ marginBottom: 14 }}>Shipment Details</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Origin</div>
+              <select className="inp" value={form.origin_port_code} onChange={e => set("origin_port_code", e.target.value)}>
+                {PORTS.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Destination</div>
+              <select className="inp" value={form.dest_port_code} onChange={e => set("dest_port_code", e.target.value)}>
+                {PORTS.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>HS Code</div>
+            <input className="inp" value={form.hs_code} onChange={e => set("hs_code", e.target.value)} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Weight (kg)</div>
+              <input className="inp" type="number" value={form.cargo_weight_kg} onChange={e => set("cargo_weight_kg", e.target.value)} />
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>FOB (USD)</div>
+              <input className="inp" type="number" value={form.fob_value_usd} onChange={e => set("fob_value_usd", e.target.value)} placeholder="Leave blank to estimate"/>
+            </div>
+          </div>
+          <button className="btn primary" style={{ width: "100%" }} onClick={calculate} disabled={loading}>
+            {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Calculating…</> : "Calculate Carbon Cost"}
+          </button>
+          {error && (
+            <div style={{ marginTop: 10, fontSize: 12, color: "var(--accent-red)" }}>{error}</div>
+          )}
+
+          {/* Methodology note */}
+          <div style={{ marginTop: 14, padding: "10px 12px", background: "var(--bg-raised)", borderRadius: "var(--radius-sm)",
+            fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.6 }}>
+            <div style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)", marginBottom: 4 }}>METHODOLOGY</div>
+            IMO MEPC.1/Circ.684 EEOI<br/>
+            0.03t HFO/nm/TEU × 3.114 CO₂/t HFO<br/>
+            EU ETS price: €{carbon?.ets_price_eur_per_tonne || 65}/t CO₂<br/>
+            Source: {carbon?.ets_price_source === "live" ? "Live macro data" : "2024 average fallback"}
+          </div>
+        </div>
+
+        {/* Results */}
+        {carbon ? (
+          <div className="fade-in">
+            {/* Main metrics */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 12 }}>
+              <div className="card" style={{ borderTop: "2px solid var(--accent-teal)" }}>
+                <div className="label" style={{ marginBottom: 6 }}>Total CO₂e</div>
+                <div style={{ fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 800, color: "var(--accent-teal)" }}>
+                  {fmt(carbon.co2_tonnes, 1)}t
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
+                  {fmt(carbon.co2_per_teu_tonnes, 2)}t per TEU
+                </div>
+              </div>
+              <div className="card" style={{ borderTop: "2px solid var(--accent-amber)" }}>
+                <div className="label" style={{ marginBottom: 6 }}>Carbon Cost (EUR)</div>
+                <div style={{ fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 800, color: "var(--accent-amber)" }}>
+                  €{fmt(carbon.carbon_cost_eur)}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
+                  at €{carbon.ets_price_eur_per_tonne}/t EU ETS
+                </div>
+              </div>
+              <div className="card" style={{ borderTop: "2px solid var(--accent-blue)" }}>
+                <div className="label" style={{ marginBottom: 6 }}>Carbon Cost (USD)</div>
+                <div style={{ fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 800, color: "var(--accent-blue)" }}>
+                  {fmtUsd(carbon.carbon_cost_usd)}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
+                  {fmt(carbon.carbon_pct_of_freight, 1)}% of freight cost
+                </div>
+              </div>
+            </div>
+
+            {/* Fuel consumption */}
+            <div className="card" style={{ marginBottom: 12 }}>
+              <div className="label" style={{ marginBottom: 12 }}>Fuel & Emissions Breakdown</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+                {[
+                  ["Distance", `${fmt(result.route_info.distance_nm)} nm`, "var(--text-primary)"],
+                  ["Fuel consumed", `${fmt(carbon.fuel_consumed_tonnes, 1)} t HFO`, "var(--accent-amber)"],
+                  ["CO₂ emitted", `${fmt(carbon.co2_tonnes, 1)} t`, "var(--accent-red)"],
+                  ["Intensity", `${fmt(carbon.co2_per_teu_tonnes * 1000 / result.route_info.distance_nm * 1000, 2)} gCO₂/TEU·nm`, "var(--text-secondary)"],
+                ].map(([label, val, color]) => (
+                  <div key={label} style={{ padding: "10px 12px", background: "var(--bg-raised)", borderRadius: "var(--radius-sm)" }}>
+                    <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 500, color }}>{val}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Context comparisons */}
+            <div className="card">
+              <div className="label" style={{ marginBottom: 12 }}>Emissions in Context</div>
+              {CONTEXT.map(ctx => {
+                const multiple = carbon.co2_tonnes / ctx.co2;
+                const barPct   = Math.min((carbon.co2_tonnes / (ctx.co2 * 10)) * 100, 100);
+                return (
+                  <div key={ctx.label} style={{ marginBottom: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{ctx.label}</span>
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-primary)" }}>
+                        {fmt(multiple, 1)}× equivalent
+                      </span>
+                    </div>
+                    <div style={{ height: 4, background: "var(--bg-hover)", borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ width: `${barPct}%`, height: "100%", background: "var(--accent-teal)", borderRadius: 2 }} />
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 3 }}>
+                      This shipment = {fmt(multiple, 1)} {ctx.label.toLowerCase()}s ({ctx.co2}t CO₂)
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 300,
+            color: "var(--text-tertiary)", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 40, opacity: 0.2 }}>◌</div>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>Calculate a shipment to see carbon impact</div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1082,6 +1514,7 @@ export default function App() {
     api.alerts()
       .then(a => setAlertCount(a.summary?.total || 0))
       .catch(() => {});
+    
   }, []);
 
   if (apiOk === false) return (
@@ -1102,7 +1535,7 @@ export default function App() {
     </div>
   );
 
-  const views = { dashboard: DashboardView, calculator: CalculatorView, commodities: CommoditiesView, ports: PortsView, alerts: AlertsView };
+  const views = { dashboard: DashboardView, calculator: CalculatorView, compare: RouteCompareView, carbon: CarbonView, commodities: CommoditiesView, ports: PortsView, alerts: AlertsView };
   const View  = views[view] || DashboardView;
 
   return (
