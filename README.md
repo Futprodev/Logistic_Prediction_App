@@ -201,13 +201,13 @@ Best for: energy commodities, metals — series dominated by autocorrelation wit
 
 Typical MAPE: 4–8% on energy, 8–15% on agricultural commodities.
 
-### Model 2 — Prophet
+### Model 2 — XGBoost (Own Lags)
 
-Facebook/Meta open-source forecasting tool. Decomposes the series into trend + yearly seasonality + noise. Handles outliers and missing values automatically.
+Supervised regression using only the commodity's own historical prices as features. The model learns from lag prices at 1, 2, 3, 6, and 12 months back, plus momentum indicators (MoM change, YoY change, spike flag) and calendar features (month, year).
 
-Best for: agricultural commodities with crop cycle seasonality — palm oil, wheat, sugar, cotton.
+Different from ARIMA because XGBoost uses decision trees to learn non-linear combinations of lag features, whereas ARIMA derives a mathematically optimal linear combination from the autocorrelation structure. In practice ARIMA tends to win on near-random walk series because the optimal combination is already known analytically — XGBoost adds complexity without adding signal.
 
-Different from ARIMA because it fits a curve rather than modelling autocorrelation. Performs worse than ARIMA on energy and metals which have no seasonal pattern.
+Best for: commodities where non-linear interactions between lag periods exist, though in practice ARIMA outperforms it on most monthly commodity series.
 
 ### Model 3 — XGBoost Cross-Commodity
 
@@ -225,7 +225,7 @@ Best for: derived commodities with causal inter-market relationships at monthly 
 
 ### Key Finding
 
-Across 71 commodities ARIMA consistently outperforms both other models. This is consistent with the academic literature — Deaton & Laroque (1996) show primary commodity prices are well-described by a near-random walk, making classical time series methods competitive with ML on monthly data. XGBoost cross-commodity adds value only where strong causal inter-market relationships exist.
+Across 71 commodities ARIMA consistently outperforms both XGBoost variants. This is consistent with the academic literature — Deaton & Laroque (1996) show primary commodity prices are well-described by a near-random walk, making classical time series methods competitive with or superior to ML on monthly data. XGBoost own lags adds complexity without improving on ARIMA's analytically optimal autocorrelation modelling. XGBoost cross-commodity adds value only where strong causal inter-market relationships exist at the monthly frequency, such as natural gas → fertiliser chains.
 
 ---
 
