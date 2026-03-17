@@ -744,30 +744,62 @@ function CommoditiesView() {
   const [commodities, setCommodities] = useState([]);
   const [selected, setSelected]       = useState(null);
   const [history, setHistory]         = useState([]);
+  const [forecast, setForecast]       = useState(null);
+  const [forecastLoading, setForecastLoading] = useState(false);
+  const [activeModels, setActiveModels] = useState({ arima: true, xgb_own: true, xgb_cross: true });
   const [loading, setLoading]         = useState(true);
-
+ 
   useEffect(() => {
     api.commodities().then(r => {
       setCommodities(r.commodities || []);
       setLoading(false);
     });
   }, []);
-
+ 
   const selectCommodity = useCallback(async (name) => {
     setSelected(name);
-    const h = await api.commodityHistory(name, 36);
+    setForecast(null);
+    const h = await api.commodityHistory(name, 60);
     setHistory(h.history || []);
+    setForecastLoading(true);
+    try {
+      const f = await api.commodityForecast(name);
+      if (!f.error) setForecast(f);
+    } catch (_) {}
+    setForecastLoading(false);
   }, []);
-
+ 
+  const toggleModel = (key) =>
+    setActiveModels(prev => ({ ...prev, [key]: !prev[key] }));
+ 
+  const chartData = (() => {
+    if (!history.length) return [];
+    const hist = history.map(h => ({ date: h.date?.slice(0, 7), actual: h.price_usd }));
+    if (!forecast?.forecast_dates) return hist;
+    const bridge = { ...hist[hist.length - 1] };
+    if (activeModels.arima     && forecast.models?.arima)      bridge.arima     = forecast.models.arima.forecast[0];
+    if (activeModels.xgb_own   && forecast.models?.xgb_own)    bridge.xgb_own   = forecast.models.xgb_own.forecast[0];
+    if (activeModels.xgb_cross && forecast.models?.xgb_cross)  bridge.xgb_cross = forecast.models.xgb_cross.forecast[0];
+    const forecastPoints = forecast.forecast_dates.map((date, i) => {
+      const point = { date: date?.slice(0, 7), actual: null };
+      if (activeModels.arima     && forecast.models?.arima)      point.arima     = forecast.models.arima.forecast[i];
+      if (activeModels.xgb_own   && forecast.models?.xgb_own)    point.xgb_own   = forecast.models.xgb_own.forecast[i];
+      if (activeModels.xgb_cross && forecast.models?.xgb_cross)  point.xgb_cross = forecast.models.xgb_cross.forecast[i];
+      return point;
+    });
+    return [...hist.slice(-48), bridge, ...forecastPoints];
+  })();
+ 
+  const intervalX = Math.max(0, Math.floor(chartData.length / 8) - 1);
+ 
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1 }}>
       <div className="spinner" style={{ width: 32, height: 32 }} />
     </div>
   );
-
+ 
   return (
     <div className="fade-in" style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-      {/* List */}
       <div style={{ width: 280, borderRight: "1px solid var(--border)", overflowY: "auto", padding: "1rem" }}>
         <div className="label" style={{ padding: "0 4px 10px" }}>All Commodities</div>
         {commodities.map(c => (
@@ -792,40 +824,130 @@ function CommoditiesView() {
           </div>
         ))}
       </div>
-
-      {/* Detail */}
+ 
       <div style={{ flex: 1, padding: "1.5rem", overflowY: "auto" }}>
         {selected ? (
           <div className="fade-in">
-            <h2 style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 700, marginBottom: "1.5rem" }}>
-              {selected}
-            </h2>
-            <div className="card">
-              <div className="label" style={{ marginBottom: 12 }}>36-Month Price History</div>
-              <ResponsiveContainer width="100%" height={280}>
-                <LineChart data={history}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.25rem" }}>
+              <h2 style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 700 }}>{selected}</h2>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {forecastLoading && <span className="spinner" style={{ width: 14, height: 14 }} />}
+                {forecast && [
+                  { key: "arima",     label: "ARIMA",     color: "#3b7fff" },
+                  { key: "xgb_own",   label: "XGB own",   color: "#f59e0b" },
+                  { key: "xgb_cross", label: "XGB cross", color: "#00c9a7" },
+                ].filter(m => forecast.models?.[m.key]).map(m => (
+                  <button key={m.key} onClick={() => toggleModel(m.key)} style={{
+                    padding: "4px 10px", borderRadius: "var(--radius-sm)", cursor: "pointer",
+                    border: `1px solid ${activeModels[m.key] ? m.color : "var(--border-strong)"}`,
+                    background: activeModels[m.key] ? `${m.color}18` : "transparent",
+                    color: activeModels[m.key] ? m.color : "var(--text-tertiary)",
+                    fontFamily: "var(--font-mono)", fontSize: 11, transition: "all 0.15s",
+                  }}>
+                    {m.label}
+                    {forecast.models[m.key]?.mape != null && (
+                      <span style={{ opacity: 0.7, marginLeft: 4 }}>{fmt(forecast.models[m.key].mape, 1)}%</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+ 
+            <div className="card" style={{ marginBottom: 12 }}>
+              <div className="label" style={{ marginBottom: 12 }}>Price History + 6-Month Forecast</div>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={chartData} margin={{ right: 16 }}>
                   <XAxis dataKey="date" tick={{ fill: "var(--text-tertiary)", fontSize: 10, fontFamily: "var(--font-mono)" }}
-                          tickFormatter={v => v?.slice(0, 7)}
-                          interval={Math.max(0, Math.floor(history.length / 8) - 1)}
-                          axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: "var(--text-tertiary)", fontSize: 10, fontFamily: "var(--font-mono)" }} axisLine={false} tickLine={false} width={60} />
+                    interval={intervalX} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "var(--text-tertiary)", fontSize: 10, fontFamily: "var(--font-mono)" }}
+                    axisLine={false} tickLine={false} width={65}
+                    tickFormatter={v => `$${v >= 1000 ? (v/1000).toFixed(1)+"k" : v.toFixed(0)}`} />
                   <Tooltip content={<ChartTooltip prefix="$" />} />
-                  <Line type="monotone" dataKey="price_usd" stroke="var(--accent-blue)" strokeWidth={2} dot={false} name="Price" />
+                  <Line type="monotone" dataKey="actual" stroke="var(--accent-blue)" strokeWidth={2} dot={false} name="Actual" connectNulls={false} />
+                  {activeModels.arima && forecast?.models?.arima && (
+                    <Line type="monotone" dataKey="arima" stroke="#3b7fff" strokeWidth={1.5} strokeDasharray="5 3" dot={false} name={forecast.models.arima.label} connectNulls />
+                  )}
+                  {activeModels.xgb_own && forecast?.models?.xgb_own && (
+                    <Line type="monotone" dataKey="xgb_own" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="5 3" dot={false} name={forecast.models.xgb_own.label} connectNulls />
+                  )}
+                  {activeModels.xgb_cross && forecast?.models?.xgb_cross && (
+                    <Line type="monotone" dataKey="xgb_cross" stroke="#00c9a7" strokeWidth={1.5} strokeDasharray="5 3" dot={false} name={forecast.models.xgb_cross.label} connectNulls />
+                  )}
                 </LineChart>
               </ResponsiveContainer>
             </div>
+ 
+            {forecast?.models && Object.keys(forecast.models).length > 0 && (
+              <div className="card">
+                <div className="label" style={{ marginBottom: 12 }}>Model Comparison — 6-Month Outlook</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                  {[
+                    { key: "arima",     label: "ARIMA",                   color: "#3b7fff", desc: "Statistical — own history only" },
+                    { key: "xgb_own",   label: "XGBoost own lags",        color: "#f59e0b", desc: "ML with own price lags" },
+                    { key: "xgb_cross", label: "XGBoost cross-commodity", color: "#00c9a7", desc: "ML with correlated commodities" },
+                  ].filter(m => forecast.models[m.key]).map(m => {
+                    const model  = forecast.models[m.key];
+                    const lastFc = model.forecast?.[model.forecast.length - 1];
+                    const change = forecast.last_price > 0 ? ((lastFc - forecast.last_price) / forecast.last_price) * 100 : null;
+                    return (
+                      <div key={m.key} style={{
+                        padding: "12px", background: "var(--bg-raised)", borderRadius: "var(--radius-sm)",
+                        borderTop: `2px solid ${m.color}`, opacity: activeModels[m.key] ? 1 : 0.4,
+                      }}>
+                        <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: m.color, marginBottom: 6 }}>{m.label}</div>
+                        <div style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 700, color: "var(--text-primary)" }}>
+                          {fmtUsd(lastFc)}
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2 }}>
+                          in 6 months
+                          {change != null && (
+                            <span style={{ marginLeft: 6, color: change > 0 ? "var(--accent-red)" : "var(--accent-teal)" }}>
+                              {change > 0 ? "+" : ""}{fmt(change, 1)}%
+                            </span>
+                          )}
+                        </div>
+                        {model.mape != null && (
+                          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4, fontFamily: "var(--font-mono)" }}>MAPE: {fmt(model.mape, 1)}%</div>
+                        )}
+                        {model.top_cross_features?.length > 0 && (
+                          <div style={{ marginTop: 8, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+                            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}>Key cross-features:</div>
+                            {model.top_cross_features.slice(0, 3).map(([feat, imp]) => (
+                              <div key={feat} style={{ fontSize: 10, color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>
+                                {feat.replace("cross_", "").replace(/_lag\d$/, "")}: {fmt(imp * 100, 1)}%
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6 }}>{m.desc}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+ 
+            {!forecast && !forecastLoading && (
+              <div className="card" style={{ textAlign: "center", padding: "2rem", color: "var(--text-tertiary)" }}>
+                <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, marginBottom: 8 }}>No forecast available</div>
+                <div style={{ fontSize: 11 }}>
+                  Run: <code style={{ background: "var(--bg-raised)", padding: "2px 6px", borderRadius: 3 }}>
+                    python ml/train_commodity_forecast.py
+                  </code>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-tertiary)", flexDirection: "column", gap: 12 }}>
             <div style={{ fontSize: 40, opacity: 0.2 }}>◉</div>
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>Select a commodity to view history</div>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>Select a commodity to view history and forecast</div>
           </div>
         )}
       </div>
     </div>
   );
 }
-
 // ════════════════════════════════════════════════════════════
 //  PORTS VIEW
 // ════════════════════════════════════════════════════════════

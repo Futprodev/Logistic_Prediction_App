@@ -217,6 +217,45 @@ app.get("/api/v1/commodities/:name/history", wrap((req, res) => {
   });
 }));
 
+// ── GET /api/v1/commodities/:name/forecast ────────────────────────────────────
+/**
+ * Price forecast for a specific commodity using pre-trained models.
+ * Returns ARIMA, XGBoost (own lags), XGBoost (cross-commodity) forecasts.
+ */
+app.get("/api/v1/commodities/:name/forecast", wrap((req, res) => {
+  const { spawnSync } = require("child_process");
+  const name = req.params.name;
+ 
+  // Get commodity_id from name
+  const row = db.prepare(`
+    SELECT DISTINCT commodity_id FROM fact_commodity_prices
+    WHERE commodity_name = ? LIMIT 1
+  `).get(name);
+ 
+  if (!row) {
+    return res.status(404).json({ error: `Commodity '${name}' not found` });
+  }
+ 
+  const script = path.join(__dirname, "../ml/predict_commodity.py");
+  const result = spawnSync("python", [script], {
+    input:       JSON.stringify({ commodity_id: row.commodity_id }),
+    timeout:     8000,
+    encoding:    "utf8",
+    windowsHide: true,
+  });
+ 
+  if (result.error) {
+    return res.status(500).json({ error: result.error.message });
+  }
+ 
+  try {
+    const forecast = JSON.parse(result.stdout.trim());
+    res.json(forecast);
+  } catch (e) {
+    res.status(500).json({ error: "Failed to parse forecast output" });
+  }
+}));
+
 // ── GET /api/v1/fuel ──────────────────────────────────────────────────────────
 /**
  * Latest fuel prices with moving averages.
@@ -405,7 +444,10 @@ app.use((req, res) => {
       "GET  /api/v1/lpi",
       "GET  /api/v1/alerts",
       "POST /api/v1/alerts/:id/acknowledge",
+      "POST /api/v1/alerts/:id/unacknowledge",
       "GET  /api/v1/macro",
+      "GET  /api/v1/scheduler",
+      "POST /api/v1/scheduler/:source/run",
     ],
   });
 });

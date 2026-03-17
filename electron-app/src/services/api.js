@@ -37,4 +37,5 @@ export const api = {
   unacknowledgeAlert: (id)     => post(`/api/v1/alerts/${id}/unacknowledge`, {}),
   schedulerStatus: ()       => get("/api/v1/scheduler"),
   schedulerRun:    (source) => post(`/api/v1/scheduler/${source}/run`, {}),
+  commodityForecast: (name) => get(`/api/v1/commodities/${encodeURIComponent(name)}/forecast`),
 };
