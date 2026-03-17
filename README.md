@@ -1,8 +1,23 @@
-# Logistics Intelligence Platform
+<p align="center">
+  <img src="electron-app/assets/icon.png" width="80" alt="Logistics Intelligence Platform" />
+</p>
 
-A data pipeline and intelligence system for supply chain analytics. The platform ingests free public datasets, stores them in a local SQLite database, and provides a desktop application for predicting shipping costs, monitoring commodity and fuel price exposure, flagging tariff opportunities, and surfacing port weather risk.
+<h1 align="center">Logistics Intelligence Platform</h1>
 
-Built as part of a Data-Driven Decision Making project at BINUS University.
+<p align="center">
+  A data pipeline and intelligence system for supply chain analytics.
+  Built as part of a Data-Driven Decision Making project at BINUS University.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python" />
+  <img src="https://img.shields.io/badge/Node.js-18+-green?style=flat-square&logo=node.js" />
+  <img src="https://img.shields.io/badge/Electron-28-blue?style=flat-square&logo=electron" />
+  <img src="https://img.shields.io/badge/XGBoost-ML-orange?style=flat-square" />
+  <img src="https://img.shields.io/badge/SQLite-database-lightgrey?style=flat-square&logo=sqlite" />
+  <img src="https://img.shields.io/badge/ARIMA-forecasting-purple?style=flat-square" />
+  <img src="https://img.shields.io/badge/Prophet-forecasting-red?style=flat-square" />
+</p>
 
 ---
 
@@ -11,30 +26,39 @@ Built as part of a Data-Driven Decision Making project at BINUS University.
 1. [What This Does](#1-what-this-does)
 2. [How the Landed Cost Calculator Works](#2-how-the-landed-cost-calculator-works)
 3. [How the ML Model Works](#3-how-the-ml-model-works)
-4. [Database Architecture](#4-database-architecture)
-5. [Data Sources and Methodology](#5-data-sources-and-methodology)
-6. [Static Reference Data — Sources and Justification](#6-static-reference-data--sources-and-justification)
-7. [What is Real vs Estimated](#7-what-is-real-vs-estimated)
-8. [Project Structure](#8-project-structure)
-9. [Quick Start](#9-quick-start)
-10. [Running the Pipeline](#10-running-the-pipeline)
-11. [Scheduled Runs](#11-scheduled-runs)
+4. [Commodity Price Forecasting](#4-commodity-price-forecasting)
+5. [Route Distance Calculation](#5-route-distance-calculation)
+6. [Carbon Cost Estimator](#6-carbon-cost-estimator)
+7. [Pipeline Scheduler](#7-pipeline-scheduler)
+8. [Database Architecture](#8-database-architecture)
+9. [Data Sources and Methodology](#9-data-sources-and-methodology)
+10. [Static Reference Data — Sources and Justification](#10-static-reference-data--sources-and-justification)
+11. [What is Real vs Estimated](#11-what-is-real-vs-estimated)
+12. [Project Structure](#12-project-structure)
+13. [Quick Start](#13-quick-start)
+14. [Running the Pipeline](#14-running-the-pipeline)
 
 ---
 
 ## 1. What This Does
 
-The platform has five core capabilities:
+The platform has eight core capabilities:
 
-**Landed Cost Calculator** — Estimates the total cost of shipping cargo from an origin port to a destination port, broken down into freight, import duty, insurance, port handling, and customs brokerage. Runs two methods in parallel: a deterministic rule-based formula and a trained XGBoost ML model, so you can compare both and understand where they diverge.
+**Landed Cost Calculator** — Estimates the total cost of shipping cargo from an origin port to a destination port. Runs two methods in parallel: a deterministic rule-based formula and a trained XGBoost ML model. The user can switch between methods and see how the cost breakdown changes, with a visual comparison of where the two approaches diverge.
 
-**Commodity Price Monitor** — Tracks 71 commodities monthly from 2000 to present (World Bank CMO). Computes month-over-month and year-over-year change, flags anomalies when prices move beyond statistical thresholds, and stores 3-year price history charts per commodity.
+**Route Comparison** — Compares landed cost across up to 5 destination ports simultaneously. Ranks routes by total cost with breakdown per route, CO₂ emissions, and FTA opportunity flags.
 
-**Fuel Price Tracker** — Weekly Brent and WTI crude prices from EIA with 30-day and 180-day moving averages. Automatically flags when current price deviates more than 20% from the 180-day average, which feeds into freight cost calculations as a surcharge multiplier.
+**Carbon Cost Estimator** — Calculates CO₂e emissions and EU ETS carbon cost per shipment using the IMO MEPC.1/Circ.684 EEOI methodology. Shows emissions in context against everyday reference points.
 
-**Port Intelligence** — 15 major global ports with 7-day weather forecasts (Open-Meteo), efficiency scores derived from World Bank LPI data, congestion indices from World Bank CPPI 2023, and live freight cost impact calculations per TEU.
+**Commodity Price Monitor** — Tracks 71 commodities monthly from 2000 to present. Computes MoM and YoY change, flags anomalies, and shows price history with 6-month forecasts from three models.
 
-**Alert System** — Automatically generated alerts for commodity price spikes, fuel surcharges, tariff rate changes, and FTA (Free Trade Agreement) opportunities where a preferential tariff rate would save money vs the standard MFN rate.
+**Commodity Price Forecasting** — Three competing forecasting models per commodity: ARIMA (statistical baseline), Prophet (trend + seasonality), and XGBoost cross-commodity (inter-market relationships). Models are toggled on/off with MAPE displayed per model.
+
+**Fuel Price Tracker** — Weekly Brent and WTI crude prices with 30-day and 180-day moving averages. Flags fuel spikes that affect freight cost calculations.
+
+**Port Intelligence** — 15 major global ports with 7-day weather forecasts, LPI efficiency scores, CPPI congestion indices, TEU throughput, and freight cost impact per TEU.
+
+**Alert System** — Automatically generated alerts for commodity price spikes, fuel surcharges, tariff changes, and FTA opportunities. Alerts can be dismissed and restored.
 
 ---
 
@@ -42,12 +66,10 @@ The platform has five core capabilities:
 
 ### Rule-Based Estimation (Deterministic)
 
-The rule-based method computes landed cost using a known formula. Every component is either a database lookup or a fixed calculation. It always produces a result, even without an internet connection.
-
 ```
 Total Landed Cost =
     FOB Value
-  + Freight Cost
+  + Freight Cost        ← rule-based formula OR ML prediction
   + Import Duty
   + Insurance
   + Port Handling (THC)
@@ -56,60 +78,56 @@ Total Landed Cost =
 
 **Step 1 — FOB Value**
 
-If the user provides a FOB (Free on Board) value, it is used directly. If not, the system estimates it by:
-1. Taking the first 2 digits of the HS code to identify the commodity chapter (e.g. `720839` → chapter `72` = Iron and Steel)
-2. Looking up the linked commodity in `dim_hs_codes` (e.g. chapter 72 → `iron_ore_cfr_spot`)
-3. Getting the latest price from `fact_commodity_prices`
-4. Converting to USD total using cargo weight and unit conversion (per tonne, per barrel, per kg etc.)
+If the user provides a FOB value it is used directly. If not, the system estimates from the HS code:
+1. First 2 digits of HS code identify the commodity chapter (e.g. `720839` → chapter `72` = Iron and Steel)
+2. `dim_hs_codes` maps the chapter to a commodity (e.g. chapter 72 → `iron_ore_cfr_spot`)
+3. Latest price from `fact_commodity_prices` × cargo weight × unit conversion
 
-If no commodity match is found, a fallback of $2/kg is used and flagged as a warning in the response.
+Unit conversions handled: per metric tonne, per barrel, per mmbtu, per cubic metre, per kg. Fallback of $2/kg if no match found.
 
-**Step 2 — Freight Cost**
+Note: the FOB estimate only changes when the HS code changes (different commodity) or cargo weight changes. It is not affected by route or destination.
+
+**Step 2 — Freight Cost (Rule-Based)**
 
 ```
 Freight = base_rate_per_nm × distance_nm × teu_fraction × fuel_surcharge_multiplier
 ```
 
-- `base_rate_per_nm` comes from a distance band lookup ($0.25–0.35/nm/TEU)
-- `distance_nm` comes from a hardcoded port-pair distance table (sourced from sea-distances.org)
-- `teu_fraction` = cargo_weight_kg / 10,000 (one TEU ≈ 10,000 kg max cargo)
-- `fuel_surcharge_multiplier` is applied when Brent crude is >20% above its 180-day average. The fuel cost component is ~35% of base freight, so a 20% fuel spike adds roughly 7% to the freight total
+- `distance_nm` — Haversine great circle distance from `dim_ports` coordinates + canal corrections
+- `base_rate_per_nm` — distance band lookup ($0.25–0.35/nm/TEU)
+- `teu_fraction` = cargo_weight_kg / 10,000
+- `fuel_surcharge_multiplier` — applied when Brent >20% above 180d average
 
 **Step 3 — Import Duty**
 
-1. Look up destination country ISO from `dim_ports`
-2. Query `fact_tariff_rates` for the best available rate — tries preferential (FTA) first, falls back to MFN (Most Favoured Nation)
-3. `duty = CIF_value × tariff_rate / 100`
-4. If a preferential rate exists that is >3pp below MFN, an FTA Opportunity alert is generated
+Queries `fact_tariff_rates` — preferential (FTA) rate first, falls back to MFN. If preferential rate is >3pp below MFN, an FTA Opportunity alert is generated.
 
 **Step 4 — Insurance**
 
-```
-Insurance = (FOB + freight) × 0.002
-```
-
-Standard CIF insurance rate of 0.2%. Industry convention for cargo insurance on international shipments.
+`Insurance = (FOB + freight) × 0.002` — standard 0.2% CIF insurance rate.
 
 **Step 5 — Port Handling (THC)**
 
-Terminal Handling Charges looked up by destination port from published carrier THC schedules (Maersk, MSC, CMA CGM 2023). Scaled by TEU fraction.
+Looked up by destination port from published carrier THC schedules (Maersk, MSC, CMA CGM 2023). Scaled by TEU fraction.
 
 **Step 6 — Customs Brokerage**
 
-Flat fee per destination country from FIATA 2023 rate survey. Range $300–$800 depending on regulatory complexity.
+Flat fee per destination country from FIATA 2023 rate survey ($300–$800).
 
 **Confidence Interval**
 
-The rule-based estimate comes with a confidence interval that widens under certain conditions:
-
 | Condition | Added Uncertainty |
-|-----------|------------------|
-| FOB was estimated (not provided) | +4% |
+|-----------|-----------------|
+| FOB estimated (not provided) | +4% |
 | Tariff rate changed in last 90 days | +3% |
 | Fuel spiking >20% above 180d average | +2% |
-| No tariff data found for route | +5% |
+| No tariff data found | +5% |
 
-Base confidence interval is ±5%.
+Base: ±5%.
+
+### Rule-Based vs ML Comparison
+
+The UI shows both estimates side by side with three selectable views — Rule-Based, ML Prediction, and Compare. Switching views updates the cost breakdown chart and total. The gap between methods is colour-coded: green (<10%), amber (10–25%), red (>25%).
 
 ---
 
@@ -117,15 +135,15 @@ Base confidence interval is ±5%.
 
 ### What the Model Predicts
 
-The XGBoost model predicts **ocean freight cost** for a shipment. It replaces the rule-based freight component with a learned prediction. All other components (duty, insurance, THC, brokerage) remain rule-based. The total landed cost uses the ML freight prediction when available and falls back to rule-based freight if the model is unavailable.
+The XGBoost model predicts ocean freight cost only. All other components (duty, insurance, THC, brokerage) remain rule-based. Falls back to rule-based freight if the model is unavailable.
 
 ### Why XGBoost
 
-XGBoost (Extreme Gradient Boosting) is a tree-based ensemble method that excels at learning non-linear relationships in tabular data. It was chosen over linear regression because freight pricing has non-linear interactions — for example, a fuel price spike matters much more on a 12,000nm route than a 500nm route, and that interaction cannot be captured by a linear model.
+Chosen over linear regression because freight pricing has non-linear interactions — a fuel spike matters much more on a 12,000nm route than a 500nm route, which a linear model cannot capture.
 
 ### Training Data Generation
 
-We do not have historical shipment records. This is common for new logistics platforms. The standard approach is **simulation-based training**: define a data-generating process from domain knowledge, add realistic market variance, and train a model that learns the underlying relationships.
+No historical shipment records are available. Simulation-based training was used: define a data-generating process from domain knowledge, add realistic market variance, train a model on the result.
 
 The data-generating process is based on the Stopford maritime economics pricing model (*Maritime Economics*, 3rd ed., 2009):
 
@@ -138,107 +156,151 @@ Freight = Base Rate
         + Congestion Surcharge
         + Canal Toll
         × Seasonal Multiplier
-        × Market Noise
+        × Market Noise (σ=13%, calibrated to Clarkson Research container freight CoV)
 ```
 
-Each component is parameterised with real data where available:
+Real data used in training:
 
-| Component | Data Source |
-|-----------|------------|
-| Fuel price | Real Brent crude prices from `fact_fuel_prices` (EIA, 3 years weekly) |
-| Fuel deviation | Real 180-day moving average deviation from `fact_fuel_prices` |
-| Port efficiency | World Bank LPI Infrastructure scores 2023 |
+| Component | Source |
+|-----------|--------|
+| Fuel price | Real Brent prices from `fact_fuel_prices` (EIA, 3yr weekly) |
+| Fuel deviation | Real 180d moving average deviation |
+| Port coordinates | Real lat/lon from `dim_ports` → Haversine distance |
+| Port efficiency | World Bank LPI Infrastructure 2023 |
 | Port congestion | World Bank CPPI 2023 |
-| Distance | sea-distances.org port pair table |
-| Canal toll | IMO published canal tariff estimates |
-| Seasonal factor | 15% premium Oct–Jan (published container demand seasonality) |
-| Market noise | Normal distribution σ=13%, clipped to ±50% — calibrated to published container freight rate coefficient of variation (Clarkson Research) |
+| Canal corrections | IMO published canal tariff estimates |
+| Seasonal factor | 15% premium Oct–Jan |
 
-3,000 training samples were generated by randomly combining port pairs, cargo weights (log-normal distribution, mean ~15 TEU), and real fuel price observations across the 3-year history.
-
-### Features
-
-| Feature | Source | Importance |
-|---------|--------|-----------|
-| cargo_teu | Derived from cargo_weight_kg / 10,000 | 36.7% |
-| cargo_weight_kg | User input | 35.4% |
-| distance_nm | Port pair lookup table | 10.8% |
-| distance_band_enc | Encoded from distance_nm | 9.0% |
-| canal_required | Route lookup (0=none, 1=Panama, 2=Suez) | 2.3% |
-| is_peak_season | Month in Oct–Jan | 1.4% |
-| dest_efficiency | LPI-derived port efficiency score | 1.0% |
-| origin_efficiency | LPI-derived port efficiency score | 0.8% |
-| month | Current month (1–12) | 0.7% |
-| fuel_price_brent | Latest from fact_fuel_prices | 0.6% |
-| dest_congestion | CPPI-derived congestion index | 0.5% |
-| origin_congestion | CPPI-derived congestion index | 0.5% |
-| fuel_deviation_pct | % deviation from 180d average | 0.5% |
-
-Cargo size (TEU and weight) dominates at ~72% combined importance. Distance accounts for ~20%. All other features share the remaining ~8%.
+3,000 training samples generated by randomly combining port pairs from `dim_ports`, log-normal cargo weights (mean ~15 TEU), and real fuel price observations.
 
 ### Model Performance
 
-Trained on 3,000 samples, evaluated on 20% held-out test set:
-
 | Metric | Value | Interpretation |
 |--------|-------|----------------|
-| R² (test) | 0.957 | Model explains 95.7% of freight cost variance |
-| R² (train) | 0.999 | Mild overfitting — normal for XGBoost |
-| MAE | $1,219 | Average absolute error per shipment |
-| MAPE | 16.5% | Average percentage error |
-| RMSE | $3,005 | Larger errors on outlier shipments |
+| R² (test) | 0.932 | Explains 93.2% of freight cost variance |
+| MAE | $857 | Average absolute error per shipment |
+| MAPE | 17.2% | Average percentage error |
 
-The 16.5% MAPE reflects genuine market uncertainty. Container freight rates have a published coefficient of variation of 12–18% around their fundamental value (Clarkson Research Container Intelligence). A perfect model on this data would achieve ~13% MAPE — the model adds approximately 3.5% error on top of irreducible market noise.
+The 17.2% MAPE reflects genuine market uncertainty. Container freight rates have a published coefficient of variation of 12–18% (Clarkson Research). MAE improved from $1,219 to $857 after switching from a hardcoded distance table to Haversine distances from the database.
 
-### Rule-Based vs ML Comparison
+### Inference
 
-The application shows both estimates side by side. Key interpretation:
-
-| Gap | Meaning |
-|-----|---------|
-| < 10% | Models agree — typical shipment |
-| 10–25% | Moderate divergence — non-linear effects present |
-| > 25% | Large divergence — investigate feature contributions |
-
-When ML predicts higher than rule-based, it is typically capturing port congestion surcharges or seasonal demand premiums that the fixed distance-band formula does not account for.
+Node.js calls `ml/predict.py` via `spawnSync` with features as JSON on stdin. Python loads `freight_model.pkl`, runs XGBoost inference, returns prediction + confidence interval + feature contributions as JSON. Typical latency: 100–300ms.
 
 ---
 
-## 4. Database Architecture
+## 4. Commodity Price Forecasting
 
-The database is SQLite, stored locally at `./data/lip.db`. It follows a star schema with raw, validated, fact, dimension, and prediction layers.
+Three competing models are trained per commodity and shown on the price history chart as dashed forecast lines extending 6 months forward.
 
-### Pipeline Stages
+### Model 1 — ARIMA
+
+Classical statistical time series model. Uses the commodity's own autocorrelation structure — how strongly last month's price predicts this month's price. Order (p,d,q) selected by AIC across a grid of candidates.
+
+Best for: energy commodities, metals — series dominated by autocorrelation with no strong seasonal pattern.
+
+Typical MAPE: 4–8% on energy, 8–15% on agricultural commodities.
+
+### Model 2 — Prophet
+
+Facebook/Meta open-source forecasting tool. Decomposes the series into trend + yearly seasonality + noise. Handles outliers and missing values automatically.
+
+Best for: agricultural commodities with crop cycle seasonality — palm oil, wheat, sugar, cotton.
+
+Different from ARIMA because it fits a curve rather than modelling autocorrelation. Performs worse than ARIMA on energy and metals which have no seasonal pattern.
+
+### Model 3 — XGBoost Cross-Commodity
+
+Supervised regression using own price lags plus lagged prices of economically correlated commodities as features. Cross-commodity relationships are based on published economic linkages:
+
+- Crude oil → fertilisers (energy input for ammonia production)
+- Natural gas → urea, DAP (direct feedstock)
+- Soybeans → soybean oil + soybean meal (crushing margin)
+- Iron ore → steel proxy
+- Gold → silver → platinum (safe-haven asset correlation)
+
+Features are z-score normalised before adding to the feature matrix so scale differences between commodities don't dominate.
+
+Best for: derived commodities with causal inter-market relationships at monthly frequency (fertilisers, oilseeds).
+
+### Key Finding
+
+Across 71 commodities ARIMA consistently outperforms both other models. This is consistent with the academic literature — Deaton & Laroque (1996) show primary commodity prices are well-described by a near-random walk, making classical time series methods competitive with ML on monthly data. XGBoost cross-commodity adds value only where strong causal inter-market relationships exist.
+
+---
+
+## 5. Route Distance Calculation
+
+Distances are calculated dynamically using the **Haversine formula** — great circle distance between lat/lon coordinates read from `dim_ports`. This replaced a hardcoded lookup table.
 
 ```
-External APIs → Raw Tables → Fact Tables → Prediction Tables → API → UI
+d = 2R × arcsin(√(sin²(Δlat/2) + cos(lat1)cos(lat2)sin²(Δlon/2)))
+R = 3440.065 nautical miles
 ```
 
-**Raw tables** store data exactly as received — never modified. Serve as the audit trail.
+### Canal Corrections
 
-**Fact tables** store cleaned, normalised, enriched data ready for analytics. Computed fields (moving averages, change percentages, spike flags) are added here by SQL transformations run inside the ingestion scripts.
+| Canal | Routes | Correction |
+|-------|--------|-----------|
+| Suez | Asia → NW Europe (RTM/HAM/ANR) | +700–800nm |
+| Suez | Asia → Mediterranean (PIR) | +300–400nm |
+| Suez | Indian Ocean → NW Europe | +500–600nm |
+| Panama | Asia → US West Coast (LAX/LGB) | +250–300nm |
 
-**Dimension tables** store reference entities — ports, countries, HS codes, commodities.
+**Limitation:** Haversine gives straight-line distance, not actual shipping lane distance. Error is typically 3–8% vs actual sailing distance. A production system would integrate with Searoutes.com API for lane-routed distances.
 
-**Prediction tables** store every calculation result with full inputs and outputs. `pred_landed_cost_estimates` records every API call so results can be audited and used as future training data.
+---
 
-### Spike Detection Algorithm
+## 6. Carbon Cost Estimator
 
-Applied to both commodity prices and fuel prices:
+### Methodology
+
+Based on IMO EEOI — MEPC.1/Circ.684:
+
+```
+Fuel consumed (t HFO) = distance_nm × 0.03 t/nm/TEU × TEU
+CO₂e (tonnes)         = fuel_consumed × 3.114 t CO₂/t HFO
+Carbon cost (EUR)      = CO₂e × EU ETS price (€/tonne)
+Carbon cost (USD)      = carbon_cost_EUR × EUR/USD rate
+```
+
+Note: carbon cost does not depend on the HS code — only distance and cargo weight. The HS code field is omitted from the carbon calculator.
+
+EU ETS price is queried from `raw_macro_indicators` if available, otherwise falls back to €65/tonne (2024 average). EUR/USD uses the live ECB rate from the database.
+
+---
+
+## 7. Pipeline Scheduler
+
+Runs inside the API server process (`api/services/scheduler.js`) using `node-cron`. State stored in `pipeline_schedule` table in SQLite.
+
+| Source | Cron | Frequency |
+|--------|------|-----------|
+| weather | `0 */6 * * *` | Every 6 hours |
+| fuel | `0 7 * * *` | Daily at 07:00 UTC |
+| commodities | `0 8 * * 1` | Every Monday 08:00 UTC |
+| tariffs | `0 9 1 * *` | 1st of month 09:00 UTC |
+
+Scheduler starts automatically when `node server.js` starts. The Pipeline Schedule card on the dashboard shows live status and has "Run now" buttons per source.
+
+API endpoints:
+```
+GET  /api/v1/scheduler              — get all schedule status
+POST /api/v1/scheduler/:source/run  — trigger immediate run
+```
+
+---
+
+## 8. Database Architecture
+
+SQLite stored at `./data/lip.db`. Star schema with raw, fact, dimension, and prediction layers.
+
+### Spike Detection
 
 ```sql
-spike_flag = 1 IF:
-    ABS(mom_change_pct) > 15%   -- month-over-month
-    OR
-    ABS(yoy_change_pct) > 40%   -- year-over-year
-```
-
-For fuel specifically:
-```
+spike_flag = 1 IF ABS(mom_change_pct) > 15% OR ABS(yoy_change_pct) > 40%
 fuel_spike = 1 IF current_price > ma_180d × 1.20
 ```
-
-The thresholds (15% MoM, 40% YoY, 20% vs 180d average) are calibrated to historical commodity price volatility — moves above these thresholds are statistically unusual (beyond 1.5–2 standard deviations for most commodity series).
 
 ### Key Tables
 
@@ -252,18 +314,17 @@ The thresholds (15% MoM, 40% YoY, 20% vs 180d average) are calibrated to histori
 | `raw_tariff_rates` | ~288 | WTO MFN and preferential rates |
 | `fact_tariff_rates` | ~288 | With rate-change flags and FTA detection |
 | `raw_weather_port` | ~105 | Open-Meteo 7-day forecasts per port |
-| `raw_lpi_scores` | ~2,158 | World Bank LPI 2007–2023 all dimensions |
+| `raw_lpi_scores` | ~2,158 | World Bank LPI 2007–2023 |
 | `dim_countries` | ~119 | Country reference with LPI scores |
 | `dim_ports` | 15 | Port coordinates, country, efficiency |
 | `dim_hs_codes` | ~32 | HS chapter to commodity mappings |
+| `pipeline_schedule` | 4 | Scheduler state per source |
 | `pred_landed_cost_estimates` | grows | Every calculation request |
 | `pred_rate_alerts` | ~68+ | FTA opportunities, fuel spikes, tariff changes |
 
 ---
 
-## 5. Data Sources and Methodology
-
-All datasets are free and publicly accessible.
+## 9. Data Sources and Methodology
 
 | Source | What It Provides | URL | Update Schedule |
 |--------|-----------------|-----|----------------|
@@ -273,55 +334,42 @@ All datasets are free and publicly accessible.
 | World Bank API | GDP growth, CPI, trade % GDP | api.worldbank.org | Annual |
 | Open-Meteo | Port weather forecasts 7-day | api.open-meteo.com | Daily |
 | World Bank LPI | Logistics Performance Index 2007–2023 | lpi.worldbank.org | Biennial |
-| WTO TAO | Tariff rates 160+ countries HS codes | tao.wto.org | Annual |
-| World Bank WDI | Container TEU traffic per country | api.worldbank.org | Annual |
-| Equasis | Fleet statistics 2018–2024 | equasis.org | Annual |
-| UN Comtrade | Bilateral trade flows | comtradeapi.un.org | Annual |
+| WTO TAO | Tariff rates 160+ countries | tao.wto.org | Annual |
 
 ---
 
-## 6. Static Reference Data — Sources and Justification
-
-Some values are hardcoded rather than ingested from live APIs. Every value is sourced from a published reference.
+## 10. Static Reference Data — Sources and Justification
 
 ### Port Congestion Index (0–1)
 
 **Source:** World Bank Container Port Performance Index (CPPI) 2023
 https://openknowledge.worldbank.org/handle/10986/39199
 
-**Methodology:** CPPI measures median ship turnaround time per port. Lower turnaround = better performance. CPPI rank was normalised to a 0–1 congestion index where 1 = most congested.
-
 | Port | Congestion | Basis |
 |------|-----------|-------|
-| PSA | 0.50 | CPPI rank 1 globally, 0.5 day median turnaround |
-| PUS | 0.45 | CPPI rank 6, consistent top Asian performer |
-| ANR | 0.45 | CPPI rank 10, strong European performance |
-| RTM | 0.50 | CPPI rank 4, leading European port |
-| HAM | 0.50 | CPPI rank 8, reliable Northern European port |
-| NGB | 0.65 | High volume, moderate documented congestion |
-| SHA | 0.70 | World's busiest port, documented congestion events |
+| PSA | 0.50 | CPPI rank 1 globally |
+| PUS | 0.45 | CPPI rank 6 |
+| ANR | 0.45 | CPPI rank 10 |
+| RTM | 0.50 | CPPI rank 4 |
+| HAM | 0.50 | CPPI rank 8 |
+| NGB | 0.65 | High volume, moderate congestion |
+| SHA | 0.70 | World's busiest port |
 | DXB | 0.55 | Middle East routing complexity |
-| KUL | 0.50 | Moderate throughput relative to capacity |
-| CMB | 0.55 | Transshipment hub, moderate anchor waiting |
-| PIR | 0.40 | Lower volume = lower congestion |
-| LAX | 0.80 | CPPI rank 78, severe documented congestion 2021–2023 |
-| LGB | 0.75 | Same US West Coast bottleneck |
-| MUM | 0.70 | CPPI rank 95, Indian customs delays |
-| MBA | 0.60 | Limited infrastructure, long dwell times (Kenya Ports Authority) |
+| KUL | 0.50 | Moderate throughput/capacity ratio |
+| CMB | 0.55 | Transshipment hub |
+| PIR | 0.40 | Lower volume |
+| LAX | 0.80 | CPPI rank 78, severe 2021–2023 congestion |
+| LGB | 0.75 | US West Coast bottleneck |
+| MUM | 0.70 | CPPI rank 95, customs delays |
+| MBA | 0.60 | Limited infrastructure (Kenya Ports Authority) |
 
 ### Port Efficiency Score (1–5)
 
-**Source:** World Bank LPI 2023 — Infrastructure dimension
-https://lpi.worldbank.org
+**Source:** World Bank LPI 2023 — Infrastructure dimension (lpi.worldbank.org). Verifiable in `raw_lpi_scores` table.
 
-The LPI infrastructure score for each port's host country is used directly. This is a legitimate proxy — the LPI infrastructure dimension specifically measures quality of trade and transport infrastructure including ports. Verifiable in the `raw_lpi_scores` table.
+### Port Distances
 
-### Port Distances (nautical miles)
-
-**Source:** sea-distances.org and ports.com
-Verifiable at: https://sea-distances.org
-
-Canal routes use passage distance, not the alternative route distance.
+**Source:** Haversine formula applied to coordinates from `dim_ports` + canal corrections. Port coordinates from port authority published coordinates, cross-referenced with ports.com.
 
 ### Terminal Handling Charges (THC)
 
@@ -333,54 +381,63 @@ Canal routes use passage distance, not the alternative route distance.
 
 ---
 
-## 7. What is Real vs Estimated
+## 11. What is Real vs Estimated
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Commodity prices | Real | World Bank CMO, monthly, last updated Jan 2025 |
+| Commodity prices | Real | World Bank CMO, monthly |
 | Fuel prices (Brent/WTI) | Real | EIA weekly, current as of last pipeline run |
 | EUR/USD exchange rate | Real | ECB daily, current as of last pipeline run |
-| GDP / CPI / trade data | Real | World Bank annual series |
-| LPI country scores | Real | World Bank 2023 survey, in database |
-| Port weather forecasts | Real | Open-Meteo 7-day, refreshed when pipeline runs |
-| Tariff rates | Partial | Static MFN averages — not live WTO data |
-| Port congestion index | Static | CPPI 2023 baseline — does not update automatically |
-| Port distances | Static | sea-distances.org — correct for fixed routes |
-| THC charges | Static | 2023 published rates |
-| ML freight prediction | Trained | XGBoost trained on synthetic + real fuel data |
+| LPI country scores | Real | World Bank 2023, in database |
+| Port weather forecasts | Real | Open-Meteo 7-day, refreshed by scheduler |
+| Port coordinates | Real | Port authority published coordinates |
+| Tariff rates | Partial | Static MFN averages — not live |
+| Port congestion index | Static | CPPI 2023 baseline |
+| THC charges | Static | 2023 published carrier rates |
+| EU ETS carbon price | Static fallback | €65/tonne 2024 average if not in DB |
+| Route distances | Calculated | Haversine + canal corrections from dim_ports |
+| ML freight prediction | Trained | XGBoost on synthetic + real fuel data |
 | FOB commodity estimate | Derived | Latest commodity price × cargo weight |
-
-**Important:** Weather, fuel, and macro data is only as fresh as the last pipeline run. Set up scheduled runs (Section 11) to keep data current.
+| Carbon cost | Calculated | IMO EEOI formula — distance + weight only |
+| Commodity forecasts | Trained | ARIMA, Prophet, XGBoost per commodity |
 
 ---
 
-## 8. Project Structure
+## 12. Project Structure
 
 ```
 project/
-├── api/                             # Express.js REST API (Node.js, localhost:3001)
-│   ├── server.js                    # All endpoints
+├── api/                             # Express.js REST API (localhost:3001)
+│   ├── server.js                    # All endpoints + scheduler startup
 │   ├── services/
-│   │   ├── landedCost.js            # Rule-based + ML calculation engine
-│   │   └── alerts.js                # Alert retrieval and acknowledgement
+│   │   ├── landedCost.js            # Rule-based + ML + carbon calculation engine
+│   │   ├── alerts.js                # Alert retrieval and acknowledgement
+│   │   └── scheduler.js             # node-cron pipeline scheduler
 │   └── package.json
 │
 ├── electron-app/                    # Desktop UI (Electron + React)
-│   ├── main.js                      # Electron main process
-│   ├── preload.js                   # Context bridge
+│   ├── main.js                      # Electron main process (clean — no scheduler)
+│   ├── preload.js                   # Context bridge (platform only)
+│   ├── assets/
+│   │   └── icon.png                 # App icon
 │   ├── src/
-│   │   ├── App.js                   # All views: Dashboard, Calculator, Commodities, Ports, Alerts
+│   │   ├── App.js                   # All views: Dashboard, Calculator, Route Compare,
+│   │   │                            # Carbon, Commodities, Ports, Alerts
 │   │   ├── index.js                 # React entry point
 │   │   ├── index.css                # Design system
 │   │   └── services/api.js          # All API calls to localhost:3001
 │   └── public/index.html
 │
 ├── ml/                              # Machine learning
-│   ├── train_freight_model.py       # Generates training data + trains XGBoost
-│   ├── predict.py                   # Called by Node.js for inference
+│   ├── train_freight_model.py       # XGBoost freight cost model training
+│   ├── predict.py                   # Freight model inference (called by Node.js)
+│   ├── train_commodity_forecast.py  # ARIMA + Prophet + XGBoost forecast training
+│   ├── predict_commodity.py         # Commodity forecast inference
 │   └── models/
-│       ├── freight_model.pkl        # Trained model (not in git — regenerate)
-│       └── freight_model_meta.json  # Metrics and feature importances
+│       ├── freight_model.pkl            # Trained freight model (not in git)
+│       ├── freight_model_meta.json      # Freight model metrics
+│       └── commodity_forecast/
+│           └── forecast_meta.json       # All commodity forecasts (not in git)
 │
 ├── ingestion/                       # Data pipeline scripts
 │   ├── ingest_commodity_prices.py   # World Bank CMO
@@ -400,76 +457,81 @@ project/
 │
 ├── data/                            # SQLite database (not in git)
 ├── logs/                            # Pipeline logs (not in git)
-└── run_pipeline.py                  # Master orchestrator — start here
+└── run_pipeline.py                  # Master orchestrator
 ```
 
 ---
 
-## 9. Quick Start
+## 13. Quick Start
 
 ### Requirements
 
 ```bash
-pip install requests pandas openpyxl xgboost scikit-learn numpy
+pip install requests pandas openpyxl xgboost scikit-learn numpy statsmodels prophet
 # Node.js v18+ from nodejs.org
 ```
 
-### First run
+### First Run
 
 ```bash
 # 1. Set up database and ingest all data
 python run_pipeline.py --backfill
 
-# 2. Train the ML model
+# 2. Train the freight ML model
 python ml/train_freight_model.py
 
-# 3. Start the API (Terminal 1)
+# 3. Train commodity forecasting models
+python ml/train_commodity_forecast.py
+
+# 4. Start the API — also starts the scheduler (Terminal 1)
 cd api && npm install && node server.js
 
-# 4. Start the desktop app (Terminal 2)
+# 5. Start the desktop app (Terminal 2)
 cd electron-app && npm install && npm run dev
 ```
 
-### Check status
+### Verify everything works
 
 ```bash
-python run_pipeline.py --status
+curl http://localhost:3001/health
+curl http://localhost:3001/api/v1/scheduler
+curl -s -X POST http://localhost:3001/api/v1/landed-cost \
+  -H "Content-Type: application/json" \
+  -d "{\"origin_port_code\":\"SHA\",\"dest_port_code\":\"RTM\",\"hs_code\":\"720839\",\"cargo_weight_kg\":24000,\"fob_value_usd\":48000}" \
+  | python -m json.tool
 ```
 
-### Optional API key (unlocks full EIA history)
+### Build desktop app
 
 ```bash
-# Get free key at eia.gov/opendata/register.php
+cd electron-app
+npm run build
+# Output: electron-app/dist/Logistics Intelligence Platform Setup 1.0.0.exe
+```
+
+The built app requires the API server to be running separately on the same machine. Start it before opening the app and click "Retry Connection" if the app shows the API error screen.
+
+### Optional API key
+
+```bash
+# Free key at eia.gov/opendata/register.php
 set EIA_API_KEY=your_key_here    # Windows
 export EIA_API_KEY=your_key_here # Mac/Linux
 ```
 
 ---
 
-## 10. Running the Pipeline
+## 14. Running the Pipeline
 
 ```bash
-python run_pipeline.py                    # Run all sources
-python run_pipeline.py --source fuel      # Fuel prices only
+python run_pipeline.py                     # Run all sources
+python run_pipeline.py --source fuel
 python run_pipeline.py --source commodities
 python run_pipeline.py --source tariffs
 python run_pipeline.py --source weather
-python run_pipeline.py --backfill         # Full historical load
-python run_pipeline.py --status           # Show row counts
-python diagnose_and_fix.py                # Diagnose and auto-fix issues
+python run_pipeline.py --backfill          # Full historical load
+python run_pipeline.py --status            # Show row counts
+python diagnose_and_fix.py                 # Diagnose and fix issues
 ```
 
----
-
-## 11. Scheduled Runs
-
-Add to crontab on Mac/Linux (`crontab -e`):
-
-```
-0 6 * * *   cd /path/to/project && python run_pipeline.py --source weather
-0 7 * * 1   cd /path/to/project && python run_pipeline.py --source fuel
-0 8 2 * *   cd /path/to/project && python run_pipeline.py --source commodities
-0 9 2 * *   cd /path/to/project && python run_pipeline.py --source tariffs
-```
-
-On Windows use Task Scheduler pointing to `run_pipeline.py`.
+Or trigger individual sources from the Pipeline Schedule card on the dashboard using "Run now" buttons.

@@ -10,19 +10,27 @@
     "react-build": "react-scripts build",
     "build": "npm run react-build && electron-builder"
   },
+
   "build": {
     "appId": "com.logistics.intelligence",
     "productName": "Logistics Intelligence Platform",
-    "directories": {
-      "output": "dist"
+    "extraMetadata": {
+      "main": "main.js"
     },
+    
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets" 
+    },
+
     "files": [
       "build/**/*",
       "main.js",
       "preload.js",
-      "scheduler.js",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "package.json"
     ],
+
     "extraResources": [
       {
         "from": "../data",
@@ -43,6 +51,7 @@
       "allowToChangeInstallationDirectory": true
     }
   },
+
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

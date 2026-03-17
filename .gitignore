@@ -87,10 +87,17 @@ images/
 pre_project_code/
 project_documents/
 
-# node and electron
+# ── Node ──────────────────────────────────────────────────────────────────────
 api/node_modules/
 electron-app/node_modules/
 electron-app/build/
+electron-app/dist/
+node_modules/
+
+# ── Electron build artifacts ──────────────────────────────────────────────────
+*.exe
+*.dmg
+*.AppImage
 
 ml/models/
 ml/__pycache__/
