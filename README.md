@@ -16,7 +16,6 @@
   <img src="https://img.shields.io/badge/XGBoost-ML-orange?style=flat-square" />
   <img src="https://img.shields.io/badge/SQLite-database-lightgrey?style=flat-square&logo=sqlite" />
   <img src="https://img.shields.io/badge/ARIMA-forecasting-purple?style=flat-square" />
-  <img src="https://img.shields.io/badge/Prophet-forecasting-red?style=flat-square" />
 </p>
 
 ---
