@@ -342,7 +342,6 @@ fuel_spike = 1 IF current_price > ma_180d × 1.20
 ### Port Congestion Index (0–1)
 
 **Source:** World Bank Container Port Performance Index (CPPI) 2023
-https://openknowledge.worldbank.org/handle/10986/39199
 
 | Port | Congestion | Basis |
 |------|-----------|-------|
