@@ -79,8 +79,8 @@ pre_project_code/.ipynb_checkpoints/
 pre_project_code/supply_chain_enriched.csv
 
 # unwanted files
-fix_commodity_sheet.py
-diagnose_and_fix.py
+# fix_commodity_sheet.py
+# diagnose_and_fix.py
 
 # pre project stuff
 images/
