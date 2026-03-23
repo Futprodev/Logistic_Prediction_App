@@ -6,7 +6,7 @@
 
 <p align="center">
   A data pipeline and intelligence system for supply chain analytics.
-  Built as part of a Data-Driven Decision Making project at BINUS University.
+  Built as part of a Data-Driven Decision Making project at HAN University.
 </p>
 
 <p align="center">
